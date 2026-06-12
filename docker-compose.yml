@@ -1,0 +1,21 @@
+version: "3.8"
+
+services:
+  aicso:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - aicso_data:/app/data
+      - aicso_db:/app/aicso.db
+      - ./config.yaml:/app/config.yaml:ro
+      - ./playbooks:/app/playbooks:ro
+    environment:
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+    stdin_open: true
+    tty: true
+
+volumes:
+  aicso_data:
+  aicso_db:

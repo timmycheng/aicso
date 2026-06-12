@@ -1,0 +1,44 @@
+name: phishing_email_response
+version: 1.0.0
+description: 钓鱼邮件事件标准响应流程
+trigger:
+  case_tags: ["phishing", "email"]
+
+steps:
+  - name: 提取IoC
+    action: extract_ioc_from_email
+    auto: true
+    description: 从邮件中提取URL、附件Hash、发件人等IoC
+
+  - name: 威胁情报查询
+    action: query_threat_intel
+    auto: true
+    description: 查询提取的IoC的威胁情报
+
+  - name: 检查邮件网关
+    action: check_email_gateway
+    auto: true
+    description: 检查邮件网关日志，确认是否有更多相关邮件
+
+  - name: 召回恶意邮件
+    action: recall_malicious_email
+    approval_required: true
+    risk_level: medium
+    description: 从所有收件人邮箱中召回恶意邮件
+
+  - name: 封禁发件人
+    action: block_sender
+    approval_required: true
+    risk_level: low
+    description: 在邮件网关中封禁发件人地址
+
+  - name: 重置受影响账号密码
+    action: reset_password
+    approval_required: true
+    risk_level: high
+    description: 重置已确认点击钓鱼链接的用户密码
+
+  - name: 生成事件报告
+    action: generate_report
+    auto: true
+    description: 自动生成事件报告

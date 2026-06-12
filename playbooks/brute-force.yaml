@@ -1,0 +1,38 @@
+name: brute_force_response
+version: 1.0.0
+description: 暴力破解攻击标准响应流程
+trigger:
+  case_tags: ["brute-force", "credential"]
+
+steps:
+  - name: 确认攻击模式
+    action: analyze_login_pattern
+    auto: true
+    description: 分析登录失败日志，确认暴力破解攻击模式
+
+  - name: 查询攻击IP情报
+    action: query_threat_intel
+    auto: true
+    description: 查询攻击源IP的威胁情报
+
+  - name: 封禁攻击IP
+    action: block_ip
+    approval_required: true
+    risk_level: medium
+    description: 在防火墙/WAF中封禁攻击源IP
+
+  - name: 锁定目标账号
+    action: lock_account
+    approval_required: true
+    risk_level: medium
+    description: 临时锁定被攻击的目标账号
+
+  - name: 检查账号状态
+    action: check_account_status
+    auto: true
+    description: 检查目标账号是否有异常登录成功的记录
+
+  - name: 生成事件报告
+    action: generate_report
+    auto: true
+    description: 自动生成事件报告

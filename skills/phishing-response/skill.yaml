@@ -1,0 +1,23 @@
+name: phishing-response
+version: 1.0.0
+description: 钓鱼邮件事件响应Skill
+author: aicso-community
+
+tools:
+  - name: analyze_email_header
+    description: 分析邮件头信息
+    entrypoint: tools/email_analysis.py
+  - name: check_email_gateway
+    description: 检查邮件网关日志
+    entrypoint: tools/email_analysis.py
+  - name: recall_email
+    description: 召回恶意邮件
+    entrypoint: tools/email_recall.py
+    approval_required: true
+    risk_level: medium
+
+playbooks:
+  - playbooks/phishing.yaml
+
+knowledge:
+  - knowledge/phishing_indicators.md

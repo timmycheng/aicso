@@ -1,0 +1,101 @@
+# AiCSO 配置文件
+
+llm:
+  default_provider: deepseek
+  providers:
+    deepseek:
+      api_key: ${DEEPSEEK_API_KEY}
+      base_url: https://api.deepseek.com/v1
+      model: deepseek-chat
+      max_tokens: 4096
+      temperature: 0.1
+    openai:
+      api_key: ${OPENAI_API_KEY}
+      model: gpt-4o
+      max_tokens: 4096
+      temperature: 0.1
+    ollama:
+      base_url: http://localhost:11434
+      model: qwen2.5:14b
+      max_tokens: 4096
+
+  budget:
+    daily_limit: 1000000
+    monthly_limit: 20000000
+    alert_on_percent: 80
+
+  context:
+    max_context_tokens: 120000
+    summary_threshold: 80000
+    truncation_strategy: smart
+
+database:
+  url: sqlite+aiosqlite:///./aicso.db
+
+vector_store:
+  provider: chromadb
+  path: ./data/chromadb
+  embedding_model: BAAI/bge-small-zh-v1.5
+  similarity_threshold: 0.7
+
+server:
+  host: 0.0.0.0
+  port: 8000
+
+logging:
+  level: INFO
+  format: json
+
+# 数据源配置
+datasources:
+  # 示例：Kafka消费（内网SIEM常用）
+  # siem_kafka:
+  #   type: kafka
+  #   enabled: true
+  #   description: "态势感知平台Kafka告警源"
+  #   config:
+  #     bootstrap_servers: 10.0.0.1:9092,10.0.0.2:9092,10.0.0.3:9092
+  #     topic: siem-alerts
+  #     group_id: aicso-consumer
+  #     # SASL认证（按需）
+  #     # sasl_mechanism: PLAIN
+  #     # sasl_username: ${KAFKA_USER}
+  #     # sasl_password: ${KAFKA_PASS}
+  #     auto_offset_reset: latest      # earliest=从头消费 | latest=只消费新消息
+  #     max_batch_size: 100
+  #     poll_timeout_ms: 5000
+  #     message_format: json
+  #     # 字段映射（根据SIEM实际输出字段配置）
+  #     field_mapping:
+  #       alert_id: alert_id
+  #       rule_name: rule_name
+  #       severity: severity
+  #       src_ip: src_ip
+  #       dst_ip: dst_ip
+  #       src_port: src_port
+  #       dst_port: dst_port
+  #       timestamp: timestamp
+  #       raw_log: raw_log
+  #     # 严重级别映射（数字→文字）
+  #     severity_mapping:
+  #       1: critical
+  #       2: high
+  #       3: medium
+  #       4: low
+  #       5: info
+
+  # 示例：Syslog文件监听
+  # syslog_file:
+  #   type: syslog
+  #   enabled: true
+  #   config:
+  #     log_path: /var/log/siem/alerts.log
+
+  # 示例：Webhook接收（SIEM主动推送告警）
+  # webhook:
+  #   type: webhook
+  #   enabled: true
+  #   config:
+  #     listen_port: 9090
+  #     secret: ${WEBHOOK_SECRET}   # 验证签名
+  #     path: /api/v1/alerts/ingest
