@@ -1,6 +1,7 @@
 """FastAPI依赖注入"""
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 
 from fastapi import Request
@@ -27,22 +28,69 @@ class AppState:
     orchestrator: Orchestrator
 
 
+async def _restore_aggregation_rules(state: AppState) -> None:
+    """从数据库的Case metadata中恢复聚合规则到内存"""
+    from aicso.aggregator.engine import CaseAggregationRule
+
+    cases = await state.case_store.list_cases(limit=1000)
+    restored = 0
+    for case_data in cases:
+        metadata = case_data.get("metadata", "{}")
+        if isinstance(metadata, str):
+            try:
+                metadata = json.loads(metadata)
+            except (json.JSONDecodeError, TypeError):
+                continue
+
+        agg = metadata.get("aggregation_rule", {})
+        if not isinstance(agg, dict):
+            continue
+        if agg.get("source") != "ai_rule":
+            continue
+
+        dimensions = agg.get("dimensions", [])
+        if not dimensions:
+            continue
+
+        case_id = case_data["case_id"]
+        rule = CaseAggregationRule(
+            case_id=case_id,
+            dimensions=dimensions,
+            window_minutes=agg.get("window_minutes", 30),
+            label=agg.get("label", ""),
+            generated_by=agg.get("generated_by", "triage_agent"),
+        )
+        state.orchestrator.aggregator.set_ai_rule(case_id, rule)
+        restored += 1
+
+    if restored:
+        import structlog
+        structlog.get_logger().info("aggregator.rules_restored", count=restored)
+
+
 async def init_app_state(config_path: str = "config.yaml") -> AppState:
     config = load_config(config_path)
     db = Database()
     await db.connect()
     await db.init_tables()
+    db.enable_write_buffer(batch_size=50, flush_interval=0.1)
 
     case_store = CaseStore(db)
     alert_store = AlertStore(db)
     event_bus = EventBus()
     context_manager = ContextManager(case_store, alert_store)
     approval_engine = ApprovalEngine(event_bus)
-    orchestrator = Orchestrator(
-        case_store, alert_store, context_manager, event_bus, approval_engine
-    )
 
-    return AppState(
+    from aicso.aggregator.engine import AlertAggregator
+    aggregator = AlertAggregator(auto_cleanup=True)
+
+    orchestrator = Orchestrator(
+        case_store, alert_store, context_manager, event_bus, approval_engine,
+        aggregator=aggregator, max_concurrent_triage=3,
+    )
+    orchestrator.start()
+
+    state = AppState(
         config=config,
         db=db,
         case_store=case_store,
@@ -53,9 +101,16 @@ async def init_app_state(config_path: str = "config.yaml") -> AppState:
         orchestrator=orchestrator,
     )
 
+    # 从数据库恢复聚合规则到内存
+    await _restore_aggregation_rules(state)
+
+    return state
+
 
 async def close_app_state(state: AppState) -> None:
-    await state.db.close()
+    await state.orchestrator.close()
+    await state.orchestrator.aggregator.stop()
+    await state.db.flush_and_close()
 
 
 def get_state(request: Request) -> AppState:

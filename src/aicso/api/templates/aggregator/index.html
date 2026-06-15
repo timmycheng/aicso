@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% block title %}聚合规则 - AiCSO{% endblock %}
+{% block content %}
+<div class="header">
+    <h1>聚合规则管理</h1>
+</div>
+
+<div class="stats">
+    <div class="stat-card">
+        <div class="label">AI聚合规则</div>
+        <div class="value">{{ ai_rules|length }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">即时规则缓存</div>
+        <div class="value">{{ immediate_cache|length }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">AI匹配缓存</div>
+        <div class="value">{{ ai_cache|length }}</div>
+    </div>
+</div>
+
+<div class="card">
+    <h2>AI聚合规则（TriageAgent生成）</h2>
+    {% if ai_rules %}
+    <table>
+        <thead>
+            <tr>
+                <th>Case ID</th>
+                <th>规则标签</th>
+                <th>匹配维度</th>
+                <th>聚合窗口</th>
+                <th>生成者</th>
+                <th>创建时间</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for case_id, rule in ai_rules.items() %}
+            <tr>
+                <td><a href="/cases/{{ case_id }}">{{ case_id }}</a></td>
+                <td>{{ rule.label or '-' }}</td>
+                <td>
+                    {% for dim in rule.dimensions %}
+                    <code style="margin-right:4px;">{{ dim }}</code>
+                    {% endfor %}
+                </td>
+                <td>{{ rule.window_minutes }} 分钟</td>
+                <td>{{ rule.generated_by }}</td>
+                <td>{{ (rule.created_at|string)[:19] }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p style="color:#999;">暂无AI生成的聚合规则（TriageAgent分析告警后会自动生成）</p>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h2>即时规则缓存（系统兜底）</h2>
+    <p style="color:#666;font-size:0.85em;margin-bottom:12px;">
+        维度：<code>src_ip + dst_ip</code>，窗口：10分钟。新Case创建时自动注册，用于快速归并同源同目标告警。
+    </p>
+    {% if immediate_cache %}
+    <table>
+        <thead>
+            <tr>
+                <th>聚合Key</th>
+                <th>Case ID</th>
+                <th>最后匹配时间</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for cache_key, (case_id, last_seen) in immediate_cache.items() %}
+            <tr>
+                <td><code>{{ cache_key }}</code></td>
+                <td><a href="/cases/{{ case_id }}">{{ case_id }}</a></td>
+                <td>{{ (last_seen|string)[:19] }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p style="color:#999;">暂无即时规则缓存</p>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h2>AI匹配缓存</h2>
+    <p style="color:#666;font-size:0.85em;margin-bottom:12px;">
+        AI规则命中时更新的缓存条目，格式为 <code>case_id:dimension:key</code>。
+    </p>
+    {% if ai_cache %}
+    <table>
+        <thead>
+            <tr>
+                <th>缓存Key</th>
+                <th>最后匹配时间</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for cache_key, last_seen in ai_cache.items() %}
+            <tr>
+                <td><code>{{ cache_key }}</code></td>
+                <td>{{ (last_seen|string)[:19] }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p style="color:#999;">暂无AI匹配缓存</p>
+    {% endif %}
+</div>
+{% endblock %}

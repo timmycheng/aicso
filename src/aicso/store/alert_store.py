@@ -16,7 +16,7 @@ class AlertStore:
         self.db = db
 
     async def create(self, alert: Alert) -> None:
-        await self.db.execute(
+        await self.db.buffered_execute(
             """INSERT INTO alerts (alert_id, source, rule_id, rule_name, severity,
                timestamp, src_ip, dst_ip, src_port, dst_port, protocol,
                raw_log, enriched_data, case_id, is_false_positive, created_at)
@@ -30,7 +30,6 @@ class AlertStore:
                 alert.created_at.isoformat(),
             ),
         )
-        await self.db.commit()
 
     async def get(self, alert_id: str) -> Optional[dict]:
         return await self.db.fetch_one(
@@ -38,11 +37,10 @@ class AlertStore:
         )
 
     async def update_case_id(self, alert_id: str, case_id: str) -> None:
-        await self.db.execute(
+        await self.db.buffered_execute(
             "UPDATE alerts SET case_id = ? WHERE alert_id = ?",
             (case_id, alert_id),
         )
-        await self.db.commit()
 
     async def list_alerts(
         self,

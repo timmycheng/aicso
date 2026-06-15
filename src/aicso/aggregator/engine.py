@@ -1,6 +1,7 @@
 """告警聚合引擎 - 两阶段聚合"""
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Optional
@@ -77,13 +78,40 @@ class AlertAggregator:
     阶段2（AI）：TriageAgent分析后，为每个Case生成专属聚合规则
     """
 
-    def __init__(self):
+    def __init__(self, auto_cleanup: bool = False):
         # per-case AI规则: case_id -> CaseAggregationRule
         self._ai_rules: dict[str, CaseAggregationRule] = {}
         # 即时规则缓存: "src_ip+dst_ip:key" -> (case_id, last_seen)
         self._immediate_cache: dict[str, tuple[str, datetime]] = {}
         # AI规则缓存: "case_id:dimension:key" -> last_seen
         self._ai_cache: dict[str, datetime] = {}
+        # 自动清理
+        self._cleanup_task: asyncio.Task | None = None
+        if auto_cleanup:
+            self._cleanup_task = asyncio.create_task(self._auto_cleanup_loop())
+
+    async def stop(self) -> None:
+        """停止自动清理"""
+        if self._cleanup_task:
+            self._cleanup_task.cancel()
+            try:
+                await self._cleanup_task
+            except asyncio.CancelledError:
+                pass
+            self._cleanup_task = None
+
+    async def _auto_cleanup_loop(self) -> None:
+        """每30分钟清理一次过期缓存"""
+        while True:
+            try:
+                await asyncio.sleep(30 * 60)
+                removed = self.cleanup(max_age_hours=2)
+                if removed:
+                    logger.info("aggregator.auto_cleanup", removed=removed)
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logger.error("aggregator.auto_cleanup_failed", exc_info=True)
 
     async def try_aggregate(self, alert: Alert) -> Optional[AggregationMatch]:
         """两阶段聚合：AI规则优先，即时规则兜底"""

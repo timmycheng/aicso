@@ -15,7 +15,7 @@ from aicso.core.approval import ApprovalEngine
 from aicso.core.context import ContextManager
 from aicso.core.event_bus import EventBus, Event, EventType
 from aicso.models.alert import Alert
-from aicso.models.case import Case, CaseSeverity, CaseStatus, SEVERITY_PRIORITY_MAP, SLA_CONFIG
+from aicso.models.case import Case, CasePriority, CaseSeverity, CaseStatus, SEVERITY_PRIORITY_MAP, SLA_CONFIG
 from aicso.store.case_store import CaseStore
 from aicso.store.alert_store import AlertStore
 
@@ -33,6 +33,7 @@ class Orchestrator:
         event_bus: EventBus,
         approval_engine: ApprovalEngine,
         aggregator: Optional[AlertAggregator] = None,
+        max_concurrent_triage: int = 3,
     ):
         self.case_store = case_store
         self.alert_store = alert_store
@@ -41,6 +42,46 @@ class Orchestrator:
         self.approval_engine = approval_engine
         self.aggregator = aggregator or AlertAggregator()
         self._agents: dict[str, BaseAgent] = {}
+
+        # TriageAgent 并发控制
+        self._max_concurrent_triage = max_concurrent_triage
+        self._triage_semaphore: asyncio.Semaphore | None = None
+        self._triage_queue: asyncio.Queue | None = None
+        self._triage_worker_task: asyncio.Task | None = None
+
+    def start(self) -> None:
+        """启动编排引擎（后台 worker）"""
+        self._triage_semaphore = asyncio.Semaphore(self._max_concurrent_triage)
+        self._triage_queue = asyncio.Queue(maxsize=200)
+        self._triage_worker_task = asyncio.create_task(self._triage_worker())
+        logger.info("orchestrator.started", max_concurrent_triage=self._max_concurrent_triage)
+
+    async def close(self) -> None:
+        """停止编排引擎"""
+        if self._triage_worker_task:
+            self._triage_worker_task.cancel()
+            try:
+                await self._triage_worker_task
+            except asyncio.CancelledError:
+                pass
+            self._triage_worker_task = None
+        logger.info("orchestrator.stopped")
+
+    async def _triage_worker(self) -> None:
+        """后台 worker：从队列取任务，控制并发执行 TriageAgent"""
+        while True:
+            try:
+                case_id, trigger_alert = await self._triage_queue.get()
+            except asyncio.CancelledError:
+                break
+
+            try:
+                async with self._triage_semaphore:
+                    await self._run_triage_with_ai_rule(case_id, trigger_alert)
+            except Exception as e:
+                logger.error("orchestrator.triage_worker_error", case_id=case_id, error=str(e))
+            finally:
+                self._triage_queue.task_done()
 
     def register_agent(self, agent: BaseAgent) -> None:
         self._agents[agent.name] = agent
@@ -56,7 +97,7 @@ class Orchestrator:
         """两阶段告警处理
 
         阶段1: 告警进入 → 存储 → 尝试聚合（AI规则 → 即时规则）
-        阶段2: 未命中 → 创建Case → 注册即时规则 → 异步触发Triage → AI生成专属聚合规则
+        阶段2: 未命中 → 创建Case → 注册即时规则 → 入队Triage → AI生成专属聚合规则
         """
         logger.info("orchestrator.handle_alert", alert_id=alert.alert_id, source=alert.source)
 
@@ -79,13 +120,20 @@ class Orchestrator:
         # 3. 未命中 → 创建新Case + 注册即时规则
         case = await self._create_case_from_alert(alert)
 
-        # 4. 异步触发TriageAgent（生成AI聚合规则）
-        asyncio.create_task(self._run_triage_with_ai_rule(case.case_id, alert))
+        # 4. 入队 TriageAgent（由 worker 控制并发）
+        if self._triage_queue is not None:
+            try:
+                self._triage_queue.put_nowait((case.case_id, alert))
+            except asyncio.QueueFull:
+                logger.warning("orchestrator.triage_queue_full", case_id=case.case_id)
+        else:
+            # fallback: 未启动 worker 时直接异步执行
+            asyncio.create_task(self._run_triage_with_ai_rule(case.case_id, alert))
 
         return case.case_id
 
     async def _run_triage_with_ai_rule(self, case_id: str, trigger_alert: Alert) -> None:
-        """异步：运行TriageAgent并应用AI生成的聚合规则"""
+        """运行TriageAgent并应用AI生成的聚合规则"""
         try:
             triage_agent = self.get_agent("triage")
             context = await self.context_manager.build_context(case_id)

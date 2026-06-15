@@ -60,24 +60,13 @@ async def mock_generate(
     injected = 0
     cases_created = 0
     if inject:
-        from aicso.aggregator.engine import AlertAggregator
         from aicso.agents.triage import TriageAgent
-        from aicso.core.approval import ApprovalEngine
-        from aicso.core.context import ContextManager
-        from aicso.core.event_bus import EventBus
-        from aicso.core.orchestrator import Orchestrator
 
-        event_bus = EventBus()
-        context_manager = ContextManager(state.case_store, state.alert_store)
-        approval_engine = ApprovalEngine(event_bus)
-        aggregator = AlertAggregator()
-        orch = Orchestrator(
-            state.case_store, state.alert_store,
-            context_manager, event_bus, approval_engine, aggregator,
-        )
-        orch.register_agent(TriageAgent(
-            llm_provider=state.config.llm.default_provider,
-        ))
+        orch = state.orchestrator
+        if "triage" not in orch._agents:
+            orch.register_agent(TriageAgent(
+                llm_provider=state.config.llm.default_provider,
+            ))
 
         for ecs in ecs_alerts:
             alert = ecs_to_alert(ecs)
@@ -135,24 +124,13 @@ async def api_mock_generate(
     injected = 0
     cases_created = 0
     if inject:
-        from aicso.aggregator.engine import AlertAggregator
         from aicso.agents.triage import TriageAgent
-        from aicso.core.approval import ApprovalEngine
-        from aicso.core.context import ContextManager
-        from aicso.core.event_bus import EventBus
-        from aicso.core.orchestrator import Orchestrator
 
-        event_bus = EventBus()
-        context_manager = ContextManager(state.case_store, state.alert_store)
-        approval_engine = ApprovalEngine(event_bus)
-        aggregator = AlertAggregator()
-        orch = Orchestrator(
-            state.case_store, state.alert_store,
-            context_manager, event_bus, approval_engine, aggregator,
-        )
-        orch.register_agent(TriageAgent(
-            llm_provider=state.config.llm.default_provider,
-        ))
+        orch = state.orchestrator
+        if "triage" not in orch._agents:
+            orch.register_agent(TriageAgent(
+                llm_provider=state.config.llm.default_provider,
+            ))
 
         for ecs in ecs_alerts:
             alert = ecs_to_alert(ecs)

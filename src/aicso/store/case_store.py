@@ -81,7 +81,7 @@ class CaseStore:
         return await self.db.fetch_all(sql, tuple(params))
 
     async def add_event(self, case_id: str, event: CaseEvent) -> None:
-        await self.db.execute(
+        await self.db.buffered_execute(
             """INSERT INTO case_events (event_id, case_id, timestamp, event_type, actor, detail)
                VALUES (?, ?, ?, ?, ?, ?)""",
             (
@@ -89,7 +89,6 @@ class CaseStore:
                 event.event_type, event.actor, json.dumps(event.detail),
             ),
         )
-        await self.db.commit()
 
     async def get_events(self, case_id: str) -> list[dict]:
         return await self.db.fetch_all(
