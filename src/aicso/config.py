@@ -30,6 +30,7 @@ class LLMContextConfig(BaseModel):
 
 
 class LLMConfig(BaseModel):
+    enabled: bool = True
     default_provider: str = "deepseek"
     providers: dict[str, LLMProviderConfig] = Field(default_factory=dict)
     budget: LLMBudgetConfig = Field(default_factory=LLMBudgetConfig)

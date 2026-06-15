@@ -87,6 +87,7 @@ async def init_app_state(config_path: str = "config.yaml") -> AppState:
     orchestrator = Orchestrator(
         case_store, alert_store, context_manager, event_bus, approval_engine,
         aggregator=aggregator, max_concurrent_triage=3,
+        llm_enabled=config.llm.enabled,
     )
     orchestrator.start()
 

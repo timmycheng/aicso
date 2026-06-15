@@ -2,6 +2,7 @@
 # 复制为 config.yaml 并填入实际值
 
 llm:
+  enabled: true          # false = 关闭所有LLM调用，纯聚合模式运行（内网无LLM时使用）
   default_provider: deepseek
   providers:
     deepseek:

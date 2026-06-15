@@ -34,6 +34,7 @@ class Orchestrator:
         approval_engine: ApprovalEngine,
         aggregator: Optional[AlertAggregator] = None,
         max_concurrent_triage: int = 3,
+        llm_enabled: bool = True,
     ):
         self.case_store = case_store
         self.alert_store = alert_store
@@ -42,6 +43,7 @@ class Orchestrator:
         self.approval_engine = approval_engine
         self.aggregator = aggregator or AlertAggregator()
         self._agents: dict[str, BaseAgent] = {}
+        self._llm_enabled = llm_enabled
 
         # TriageAgent 并发控制
         self._max_concurrent_triage = max_concurrent_triage
@@ -121,7 +123,9 @@ class Orchestrator:
         case = await self._create_case_from_alert(alert)
 
         # 4. 入队 TriageAgent（由 worker 控制并发）
-        if self._triage_queue is not None:
+        if not self._llm_enabled:
+            logger.debug("orchestrator.triage_skipped_llm_disabled", case_id=case.case_id)
+        elif self._triage_queue is not None:
             try:
                 self._triage_queue.put_nowait((case.case_id, alert))
             except asyncio.QueueFull:
