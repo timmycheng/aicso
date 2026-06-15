@@ -29,11 +29,8 @@ dependencies = [
     "litellm>=1.40.0",
     "httpx>=0.27.0",
     "aiosqlite>=0.20.0",
-    "chromadb>=0.5.0",
     "structlog>=24.0.0",
     "python-ulid>=2.0.0",
-    "mcp>=1.0.0",
-    "aiokafka>=0.11.0",
     "fastapi>=0.111.0",
     "uvicorn[standard]>=0.30.0",
     "jinja2>=3.1.0",
@@ -41,6 +38,18 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+vector = [
+    "chromadb>=0.5.0",
+]
+kafka = [
+    "aiokafka>=0.11.0",
+]
+mcp = [
+    "mcp>=1.0.0",
+]
+all = [
+    "aicso[vector,kafka,mcp]",
+]
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",

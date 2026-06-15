@@ -20,9 +20,10 @@ server_err.log
 
 # Data
 data/
-offline_pkgs/
-offline_dist/
-aicso-offline.tar
+*.tar
+*.tar.gz
+offline_pkgs*/
+requirements_offline.txt
 
 # IDE
 .vscode/
