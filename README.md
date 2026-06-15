@@ -47,27 +47,13 @@ aicso init
 ### 基本使用
 
 ```bash
-# Case管理
+# 启动Web平台
+aicso-web
+# 浏览器访问 http://localhost:8000
+
+# CLI模式（仍然可用）
 aicso case create --title "Phishing Attack" --severity high
 aicso case list
-aicso case show CSO-20260612-ABC123
-aicso case update CSO-20260612-ABC123 --status investigating
-aicso case close CSO-20260612-ABC123
-
-# 告警管理
-aicso alert list
-aicso alert show alert-001
-
-# 数据源
-aicso datasource types          # 查看支持的数据源类型
-aicso datasource list           # 查看已配置的数据源
-aicso datasource test my_siem   # 测试连接
-aicso datasource pull my_siem   # 拉取告警入库
-
-# Agent（需配置LLM API Key）
-aicso agent status
-aicso agent investigate CSO-20260612-ABC123
-aicso agent report CSO-20260612-ABC123
 ```
 
 ## 数据源配置
@@ -152,11 +138,41 @@ datasources:
 - **ResponseAgent** — 制定响应方案、评估风险级别
 - **ReportAgent** — 生成事件报告
 
+## Web平台
+
+AiCSO提供Web管理界面，启动后访问 `http://localhost:8000`：
+
+```bash
+aicso-web
+```
+
+| 页面 | 路径 | 功能 |
+|------|------|------|
+| 仪表盘 | `/` | 概览统计、最近Case |
+| Case管理 | `/cases` | Case列表、新建、详情、状态更新 |
+| 告警管理 | `/alerts` | 告警列表、详情查看 |
+| Agent | `/agents` | Agent状态、启动调查、生成报告 |
+| 数据源 | `/datasources` | 已配置数据源列表 |
+
+JSON API端点：
+- `GET /cases/api/list` - Case列表
+- `GET /cases/api/{case_id}` - Case详情
+- `GET /alerts/api/list` - 告警列表
+- `GET /alerts/api/{alert_id}` - 告警详情
+- `GET /agents/api/status` - Agent状态
+- `GET /datasources/api/list` - 数据源列表
+
 ## 项目结构
 
 ```
 aicso/
 ├── src/aicso/
+│   ├── api/              # Web平台（FastAPI + Jinja2）
+│   │   ├── app.py        # FastAPI应用入口
+│   │   ├── deps.py       # 依赖注入
+│   │   ├── routes/       # 路由（case/alert/agent/datasource）
+│   │   ├── templates/    # Jinja2 HTML模板
+│   │   └── static/       # 静态资源
 │   ├── cli/              # CLI命令（case/alert/agent/datasource）
 │   ├── core/             # 核心引擎（编排器、事件总线、审批、上下文）
 │   ├── agents/           # 5个AI Agent实现

@@ -72,25 +72,100 @@ class TestOrchestrator:
         assert case_id is not None
         assert case_id.startswith("CSO-")
 
+        stored_alert = await orchestrator.alert_store.get("A-001")
+        assert stored_alert is not None
+        assert stored_alert["case_id"] == case_id
+
     @pytest.mark.asyncio
-    async def test_handle_alert_aggregates(self, orchestrator):
-        alert1 = Alert(alert_id="A-001", source="test", src_ip="1.2.3.4", rule_name="Rule 1")
+    async def test_handle_alert_aggregates_same_pair(self, orchestrator):
+        """同src_ip+dst_ip的告警应聚合到同一Case"""
+        alert1 = Alert(
+            alert_id="A-001", source="test",
+            src_ip="1.2.3.4", dst_ip="10.0.0.1",
+            rule_name="Brute Force",
+        )
         case_id1 = await orchestrator.handle_alert(alert1)
 
-        alert2 = Alert(alert_id="A-002", source="test", src_ip="1.2.3.4", rule_name="Rule 2")
+        alert2 = Alert(
+            alert_id="A-002", source="test",
+            src_ip="1.2.3.4", dst_ip="10.0.0.1",
+            rule_name="Brute Force 2",
+        )
         case_id2 = await orchestrator.handle_alert(alert2)
 
         assert case_id1 == case_id2
 
     @pytest.mark.asyncio
-    async def test_handle_alert_different_ips(self, orchestrator):
-        alert1 = Alert(alert_id="A-001", source="test", src_ip="1.2.3.4", rule_name="Rule 1")
+    async def test_handle_alert_no_aggregate_different_dst(self, orchestrator):
+        """同src_ip但不同dst_ip不应聚合"""
+        alert1 = Alert(
+            alert_id="A-001", source="test",
+            src_ip="1.2.3.4", dst_ip="10.0.0.1",
+            rule_name="Rule 1",
+        )
         case_id1 = await orchestrator.handle_alert(alert1)
 
-        alert2 = Alert(alert_id="A-002", source="test", src_ip="5.6.7.8", rule_name="Rule 2")
+        alert2 = Alert(
+            alert_id="A-002", source="test",
+            src_ip="1.2.3.4", dst_ip="10.0.0.2",
+            rule_name="Rule 2",
+        )
         case_id2 = await orchestrator.handle_alert(alert2)
 
         assert case_id1 != case_id2
+
+    @pytest.mark.asyncio
+    async def test_handle_alert_different_ips(self, orchestrator):
+        alert1 = Alert(
+            alert_id="A-001", source="test",
+            src_ip="1.2.3.4", dst_ip="10.0.0.1",
+            rule_name="Rule 1",
+        )
+        case_id1 = await orchestrator.handle_alert(alert1)
+
+        alert2 = Alert(
+            alert_id="A-002", source="test",
+            src_ip="5.6.7.8", dst_ip="10.0.0.1",
+            rule_name="Rule 2",
+        )
+        case_id2 = await orchestrator.handle_alert(alert2)
+
+        assert case_id1 != case_id2
+
+    @pytest.mark.asyncio
+    async def test_aggregated_alert_has_case_id(self, orchestrator):
+        alert1 = Alert(
+            alert_id="A-001", source="test",
+            src_ip="1.2.3.4", dst_ip="10.0.0.1",
+            rule_name="Rule 1",
+        )
+        case_id = await orchestrator.handle_alert(alert1)
+
+        alert2 = Alert(
+            alert_id="A-002", source="test",
+            src_ip="1.2.3.4", dst_ip="10.0.0.1",
+            rule_name="Rule 2",
+        )
+        await orchestrator.handle_alert(alert2)
+
+        stored = await orchestrator.alert_store.get("A-002")
+        assert stored["case_id"] == case_id
+
+    @pytest.mark.asyncio
+    async def test_case_metadata_has_immediate_rule(self, orchestrator):
+        alert = Alert(
+            alert_id="A-001", source="test",
+            src_ip="1.2.3.4", dst_ip="10.0.0.1",
+            rule_name="Test",
+        )
+        case_id = await orchestrator.handle_alert(alert)
+
+        case = await orchestrator.case_store.get(case_id)
+        import json
+        metadata = json.loads(case["metadata"]) if isinstance(case["metadata"], str) else case["metadata"]
+        rule = metadata.get("aggregation_rule", {})
+        assert rule["source"] == "immediate"
+        assert "src_ip+dst_ip" in rule["dimensions"]
 
     @pytest.mark.asyncio
     async def test_agent_registered(self, orchestrator):

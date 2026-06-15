@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}AiCSO - 仪表盘{% endblock %}
+{% block content %}
+<div class="header">
+    <h1>仪表盘</h1>
+</div>
+
+<div class="stats">
+    <div class="stat-card">
+        <div class="label">活跃Case</div>
+        <div class="value">{{ total_cases }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">总告警数</div>
+        <div class="value">{{ total_alerts }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">严重告警</div>
+        <div class="value">{{ severity_counts.get('critical', 0) + severity_counts.get('high', 0) }}</div>
+    </div>
+    <div class="stat-card">
+        <div class="label">Agent状态</div>
+        <div class="value" style="font-size:1em;color:#27ae60;">就绪</div>
+    </div>
+</div>
+
+<div class="card">
+    <h2>最近Case</h2>
+    {% if cases %}
+    <table>
+        <thead>
+            <tr>
+                <th>Case ID</th>
+                <th>标题</th>
+                <th>严重级别</th>
+                <th>状态</th>
+                <th>负责人</th>
+                <th>创建时间</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for c in cases %}
+            <tr>
+                <td><a href="/cases/{{ c.case_id }}">{{ c.case_id }}</a></td>
+                <td>{{ c.title[:50] if c.title else '' }}</td>
+                <td><span class="badge badge-{{ c.severity }}">{{ c.severity }}</span></td>
+                <td><span class="badge badge-{{ c.status }}">{{ c.status }}</span></td>
+                <td>{{ c.assignee_id or '-' }}</td>
+                <td>{{ (c.created_at|string)[:19] if c.created_at else '-' }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    <p style="margin-top:12px;"><a href="/cases">查看全部 &rarr;</a></p>
+    {% else %}
+    <p style="color:#999;">暂无Case数据</p>
+    {% endif %}
+</div>
+{% endblock %}

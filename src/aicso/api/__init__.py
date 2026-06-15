@@ -1,1 +1,1 @@
-"""REST API"""
+"""Web API - FastAPI应用"""

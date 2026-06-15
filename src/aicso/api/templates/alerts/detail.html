@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}{{ alert.alert_id }} - AiCSO{% endblock %}
+{% block content %}
+<div class="header">
+    <h1>告警详情</h1>
+    <a href="/alerts" class="btn btn-sm">返回列表</a>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+    <div class="card">
+        <h2>基本信息</h2>
+        <div class="detail-grid">
+            <div class="label">Alert ID</div>
+            <div class="value">{{ alert.alert_id }}</div>
+            <div class="label">来源</div>
+            <div class="value">{{ alert.source or '-' }}</div>
+            <div class="label">规则ID</div>
+            <div class="value">{{ alert.rule_id or '-' }}</div>
+            <div class="label">规则名称</div>
+            <div class="value">{{ alert.rule_name or '-' }}</div>
+            <div class="label">严重级别</div>
+            <div class="value"><span class="badge badge-{{ alert.severity }}">{{ alert.severity }}</span></div>
+            <div class="label">时间</div>
+            <div class="value">{{ (alert.timestamp|string)[:19] if alert.timestamp else '-' }}</div>
+            <div class="label">Case ID</div>
+            <div class="value">{% if alert.case_id %}<a href="/cases/{{ alert.case_id }}">{{ alert.case_id }}</a>{% else %}-{% endif %}</div>
+            <div class="label">误报标记</div>
+            <div class="value">{{ '是' if alert.is_false_positive else '否' }}</div>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>网络信息</h2>
+        <div class="detail-grid">
+            <div class="label">源IP</div>
+            <div class="value">{{ alert.src_ip or '-' }}</div>
+            <div class="label">目标IP</div>
+            <div class="value">{{ alert.dst_ip or '-' }}</div>
+            <div class="label">源端口</div>
+            <div class="value">{{ alert.src_port or '-' }}</div>
+            <div class="label">目标端口</div>
+            <div class="value">{{ alert.dst_port or '-' }}</div>
+            <div class="label">协议</div>
+            <div class="value">{{ alert.protocol or '-' }}</div>
+        </div>
+    </div>
+</div>
+
+{% if alert.raw_log %}
+<div class="card">
+    <h2>原始日志</h2>
+    <pre style="background:#f8f9fa;padding:12px;border-radius:4px;overflow-x:auto;font-size:0.85em;white-space:pre-wrap;">{{ alert.raw_log[:2000] }}</pre>
+</div>
+{% endif %}
+{% endblock %}

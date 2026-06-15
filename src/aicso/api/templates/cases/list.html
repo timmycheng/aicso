@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Case管理 - AiCSO{% endblock %}
+{% block content %}
+<div class="header">
+    <h1>Case管理</h1>
+    <a href="/cases/new" class="btn btn-primary">+ 新建Case</a>
+</div>
+
+<div class="card">
+    <form method="get" style="display:flex;gap:12px;margin-bottom:16px;align-items:flex-end;">
+        <div class="form-group" style="margin:0;">
+            <label>状态</label>
+            <select name="status" style="width:150px;">
+                <option value="">全部</option>
+                {% for s in ['new','assigned','investigating','responding','resolved','closed'] %}
+                <option value="{{ s }}" {% if filter_status == s %}selected{% endif %}>{{ s }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="form-group" style="margin:0;">
+            <label>严重级别</label>
+            <select name="severity" style="width:150px;">
+                <option value="">全部</option>
+                {% for s in ['critical','high','medium','low','info'] %}
+                <option value="{{ s }}" {% if filter_severity == s %}selected{% endif %}>{{ s }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <button type="submit" class="btn btn-primary btn-sm">筛选</button>
+    </form>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Case ID</th>
+                <th>标题</th>
+                <th>严重级别</th>
+                <th>状态</th>
+                <th>负责人</th>
+                <th>SLA截止</th>
+                <th>创建时间</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for c in cases %}
+            <tr>
+                <td><a href="/cases/{{ c.case_id }}">{{ c.case_id }}</a></td>
+                <td>{{ c.title[:50] if c.title else '' }}</td>
+                <td><span class="badge badge-{{ c.severity }}">{{ c.severity }}</span></td>
+                <td><span class="badge badge-{{ c.status }}">{{ c.status }}</span></td>
+                <td>{{ c.assignee_id or '-' }}</td>
+                <td>{{ (c.sla_deadline|string)[:19] if c.sla_deadline else '-' }}</td>
+                <td>{{ (c.created_at|string)[:19] if c.created_at else '-' }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    <p style="margin-top:12px;color:#999;">共 {{ total }} 条</p>
+</div>
+{% endblock %}

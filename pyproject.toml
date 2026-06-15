@@ -23,7 +23,6 @@ classifiers = [
 dependencies = [
     "typer>=0.12.0",
     "rich>=13.0.0",
-    "textual>=0.60.0",
     "pydantic>=2.5.0",
     "pydantic-settings>=2.1.0",
     "pyyaml>=6.0",
@@ -35,6 +34,10 @@ dependencies = [
     "python-ulid>=2.0.0",
     "mcp>=1.0.0",
     "aiokafka>=0.11.0",
+    "fastapi>=0.111.0",
+    "uvicorn[standard]>=0.30.0",
+    "jinja2>=3.1.0",
+    "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]
@@ -47,7 +50,8 @@ dev = [
 ]
 
 [project.scripts]
-aicso = "aicso.cli.app:app"
+aicso = "aicso.cli:app"
+aicso-web = "aicso.api.app:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/aicso"]

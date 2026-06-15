@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}告警管理 - AiCSO{% endblock %}
+{% block content %}
+<div class="header">
+    <h1>告警管理</h1>
+</div>
+
+<div class="card">
+    <form method="get" style="display:flex;gap:12px;margin-bottom:16px;align-items:flex-end;">
+        <div class="form-group" style="margin:0;">
+            <label>Case ID</label>
+            <input type="text" name="case_id" value="{{ filter_case_id or '' }}" placeholder="筛选Case ID" style="width:200px;">
+        </div>
+        <div class="form-group" style="margin:0;">
+            <label>来源</label>
+            <input type="text" name="source" value="{{ filter_source or '' }}" placeholder="筛选来源" style="width:150px;">
+        </div>
+        <button type="submit" class="btn btn-primary btn-sm">筛选</button>
+    </form>
+
+    <table>
+        <thead>
+            <tr>
+                <th>Alert ID</th>
+                <th>来源</th>
+                <th>规则名称</th>
+                <th>严重级别</th>
+                <th>源IP</th>
+                <th>目标IP</th>
+                <th>Case ID</th>
+                <th>时间</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for a in alerts %}
+            <tr>
+                <td><a href="/alerts/{{ a.alert_id }}">{{ a.alert_id[:20] }}</a></td>
+                <td>{{ a.source or '' }}</td>
+                <td>{{ a.rule_name or 'N/A' }}</td>
+                <td><span class="badge badge-{{ a.severity }}">{{ a.severity }}</span></td>
+                <td>{{ a.src_ip or '-' }}</td>
+                <td>{{ a.dst_ip or '-' }}</td>
+                <td>{% if a.case_id %}<a href="/cases/{{ a.case_id }}">{{ a.case_id }}</a>{% else %}-{% endif %}</td>
+                <td>{{ (a.timestamp|string)[:19] if a.timestamp else '-' }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    <p style="margin-top:12px;color:#999;">共 {{ total }} 条</p>
+</div>
+{% endblock %}

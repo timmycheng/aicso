@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}{{ action }}结果 - AiCSO{% endblock %}
+{% block content %}
+<div class="header">
+    <h1>{{ action }}结果: {{ case_id }}</h1>
+    <a href="/agents" class="btn btn-sm">返回Agent</a>
+</div>
+
+<div class="card">
+    {% if result is string %}
+    <div style="white-space:pre-wrap;font-size:0.95em;line-height:1.6;">{{ result }}</div>
+    {% elif result is mapping %}
+    <pre style="background:#f8f9fa;padding:16px;border-radius:4px;overflow-x:auto;font-size:0.85em;">{{ result | tojson(indent=2) }}</pre>
+    {% else %}
+    <p style="color:#999;">无结果</p>
+    {% endif %}
+</div>
+{% endblock %}

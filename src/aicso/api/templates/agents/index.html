@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Agent - AiCSO{% endblock %}
+{% block content %}
+<div class="header">
+    <h1>Agent管理</h1>
+</div>
+
+{% if error %}
+<div class="alert alert-error">{{ error }}</div>
+{% endif %}
+
+<div class="card">
+    <h2>Agent状态</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Agent</th>
+                <th>描述</th>
+                <th>状态</th>
+                <th>工具</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for agent in agents %}
+            <tr>
+                <td style="font-weight:600;color:#16213e;">{{ agent.name }}</td>
+                <td>{{ agent.description }}</td>
+                <td><span class="badge badge-resolved">idle</span></td>
+                <td>{{ agent.tools|join(', ') if agent.tools else '-' }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+    <div class="card">
+        <h2>启动调查</h2>
+        <p style="color:#666;font-size:0.9em;margin-bottom:12px;">对指定Case执行AI调查，包括事件分析、威胁情报关联、攻击链还原。</p>
+        <form method="post" action="/agents/investigate">
+            <div class="form-group">
+                <label for="investigate_case_id">Case ID</label>
+                <input type="text" id="investigate_case_id" name="case_id" required placeholder="例如: CSO-20260615-ABC123">
+            </div>
+            <button type="submit" class="btn btn-primary">开始调查</button>
+        </form>
+    </div>
+
+    <div class="card">
+        <h2>生成报告</h2>
+        <p style="color:#666;font-size:0.9em;margin-bottom:12px;">对指定Case生成完整的事件报告，包含调查结果、响应方案和IoC汇总。</p>
+        <form method="post" action="/agents/report">
+            <div class="form-group">
+                <label for="report_case_id">Case ID</label>
+                <input type="text" id="report_case_id" name="case_id" required placeholder="例如: CSO-20260615-ABC123">
+            </div>
+            <button type="submit" class="btn btn-primary">生成报告</button>
+        </form>
+    </div>
+</div>
+{% endblock %}

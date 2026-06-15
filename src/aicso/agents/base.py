@@ -86,12 +86,26 @@ class BaseAgent(ABC):
         """调用LLM"""
         try:
             from litellm import acompletion
+            from aicso.config import load_config
+
+            config = load_config()
+            provider_cfg = config.llm.providers.get(self.llm_provider, {})
+
+            model_name = self.llm_model or provider_cfg.model if hasattr(provider_cfg, 'model') else self.llm_model or "deepseek-chat"
+
             kwargs = {
-                "model": f"{self.llm_provider}/{self.llm_model or 'deepseek-chat'}",
+                "model": model_name,
                 "messages": messages,
                 "temperature": 0.1,
                 "max_tokens": 4096,
             }
+
+            if hasattr(provider_cfg, 'api_key') and provider_cfg.api_key:
+                kwargs["api_key"] = provider_cfg.api_key
+            if hasattr(provider_cfg, 'base_url') and provider_cfg.base_url:
+                kwargs["api_base"] = provider_cfg.base_url
+                kwargs["model"] = f"openai/{model_name}"
+
             if tools:
                 kwargs["tools"] = tools
             response = await acompletion(**kwargs)

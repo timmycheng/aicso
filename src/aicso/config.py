@@ -92,5 +92,9 @@ def load_config(config_path: str = "config.yaml") -> AppConfig:
         with open(path, "r", encoding="utf-8") as f:
             raw = yaml.safe_load(f) or {}
         raw = _resolve_env_vars(raw)
+        # Ensure dict fields are not None
+        for key in ("datasources",):
+            if key in raw and raw[key] is None:
+                raw[key] = {}
         return AppConfig(**raw)
     return AppConfig()
