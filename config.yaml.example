@@ -1,11 +1,12 @@
 # AiCSO 配置文件
+# 复制为 config.yaml 并填入实际值
 
 llm:
   default_provider: deepseek
   providers:
     deepseek:
-      api_key: ${DEEPSEEK_API_KEY}
-      base_url: https://api.deepseek.com/v1
+      api_key: your-api-key-here
+      base_url: https://api.deepseek.com
       model: deepseek-chat
       max_tokens: 4096
       temperature: 0.1
@@ -57,26 +58,17 @@ datasources:
   #     bootstrap_servers: 10.0.0.1:9092,10.0.0.2:9092,10.0.0.3:9092
   #     topic: siem-alerts
   #     group_id: aicso-consumer
-  #     # SASL认证（按需）
-  #     # sasl_mechanism: PLAIN
-  #     # sasl_username: ${KAFKA_USER}
-  #     # sasl_password: ${KAFKA_PASS}
-  #     auto_offset_reset: latest      # earliest=从头消费 | latest=只消费新消息
+  #     auto_offset_reset: latest
   #     max_batch_size: 100
   #     poll_timeout_ms: 5000
   #     message_format: json
-  #     # 字段映射（根据SIEM实际输出字段配置）
   #     field_mapping:
   #       alert_id: alert_id
   #       rule_name: rule_name
   #       severity: severity
   #       src_ip: src_ip
   #       dst_ip: dst_ip
-  #       src_port: src_port
-  #       dst_port: dst_port
   #       timestamp: timestamp
-  #       raw_log: raw_log
-  #     # 严重级别映射（数字→文字）
   #     severity_mapping:
   #       1: critical
   #       2: high
@@ -84,18 +76,19 @@ datasources:
   #       4: low
   #       5: info
 
+  # 示例：REST API（SIEM HTTP接口）
+  # siem_api:
+  #   type: rest_api
+  #   enabled: true
+  #   config:
+  #     base_url: https://siem.example.com/api/v1
+  #     auth_type: bearer
+  #     api_token: ${SIEM_API_TOKEN}
+  #     alerts_endpoint: /alerts
+
   # 示例：Syslog文件监听
   # syslog_file:
   #   type: syslog
   #   enabled: true
   #   config:
   #     log_path: /var/log/siem/alerts.log
-
-  # 示例：Webhook接收（SIEM主动推送告警）
-  # webhook:
-  #   type: webhook
-  #   enabled: true
-  #   config:
-  #     listen_port: 9090
-  #     secret: ${WEBHOOK_SECRET}   # 验证签名
-  #     path: /api/v1/alerts/ingest
