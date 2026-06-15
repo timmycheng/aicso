@@ -9,7 +9,14 @@ build/
 
 # Database
 *.db
+*.db-shm
+*.db-wal
 *.sqlite
+
+# Logs
+*.log
+server.log
+server_err.log
 
 # Data
 data/
