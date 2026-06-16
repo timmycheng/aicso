@@ -1,33 +1,46 @@
 FROM python:3.11-slim
 
+ARG HTTP_PROXY
+ARG HTTPS_PROXY
+ARG NO_PROXY
+
+ENV HTTP_PROXY=${HTTP_PROXY}
+ENV HTTPS_PROXY=${HTTPS_PROXY}
+ENV NO_PROXY=${NO_PROXY}
+
 WORKDIR /app
 
-# 安装系统依赖
+# Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     && rm -rf /var/lib/apt/lists/*
 
-# 复制依赖文件
+# Copy project files
 COPY pyproject.toml README.md LICENSE ./
 COPY src/ src/
 
-# 安装Python依赖
+# Install Python dependencies
 RUN pip install --no-cache-dir -e .
 
-# 复制配置和数据
-COPY config.yaml ./
+# Copy config, playbooks and skills
+COPY config.yaml.example config.yaml
 COPY playbooks/ playbooks/
 COPY skills/ skills/
 
-# 创建数据目录
+# Create data directories
 RUN mkdir -p data/chromadb
 
-# 初始化数据库
-RUN python -c "import asyncio; from aicso.store.database import Database; db = Database('./aicso.db'); asyncio.run(db.connect()); asyncio.run(db.init_tables()); asyncio.run(db.close())"
+# Clean up proxy settings from final image
+ENV HTTP_PROXY=
+ENV HTTPS_PROXY=
+ENV NO_PROXY=
 
-# 暴露端口（后续API用）
+# Expose web port
 EXPOSE 8000
 
-# 入口点
-ENTRYPOINT ["aicso"]
-CMD ["--help"]
+# Health check
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD python -c "import httpx; httpx.get('http://localhost:8000/')" || exit 1
+
+# Start web server
+CMD ["aicso-web"]

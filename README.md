@@ -186,7 +186,7 @@ aicso/
 ├── playbooks/            # 内置Playbook模板（钓鱼/暴力破解/恶意软件）
 ├── skills/               # Skill插件
 ├── tests/                # 53个测试（单元+集成）
-├── scripts/              # 离线打包/安装脚本
+├── scripts/              # 辅助脚本（数据库初始化、种子数据）
 ├── docs/                 # 产品文档（PRD/技术方案/白皮书）
 ├── config.yaml           # 配置文件
 └── pyproject.toml        # 项目配置
@@ -194,15 +194,17 @@ aicso/
 
 ## 离线部署
 
-适用于内网无外网环境：
+适用于内网无外网环境，使用Docker镜像方式部署：
 
 ```bash
-# 有网机器：打包
-python scripts/pack_offline.py
-# 产物：aicso-offline.tar (含全部依赖wheel)
+# 有网机器：构建镜像并导出
+docker build -t aicso:latest .
+docker save aicso:latest -o aicso-docker.tar
 
-# 拷贝到内网后：安装
-python scripts/install_offline.py
+# 拷贝到内网后：加载镜像并启动
+docker load -i aicso-docker.tar
+docker compose up -d
+# 浏览器访问 http://localhost:8000
 ```
 
 ## 文档
