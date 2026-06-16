@@ -8,72 +8,61 @@
 
 ### 1.1 系统架构图
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         AiCSO 系统架构                               │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│  ┌──────────────────────────────────────────────────────────────┐   │
-│  │                    交互层 (Interaction Layer)                  │   │
-│  │   ┌─────────┐    ┌─────────┐    ┌─────────┐    ┌─────────┐  │   │
-│  │   │   CLI   │    │   TUI   │    │  REST   │    │  Web    │  │   │
-│  │   │  命令行  │    │ 终端界面 │    │   API   │    │  前端   │  │   │
-│  │   └────┬────┘    └────┬────┘    └────┬────┘    └────┬────┘  │   │
-│  └────────┼──────────────┼──────────────┼──────────────┼────────┘   │
-│           │              │              │              │            │
-│           └──────────────┴──────┬───────┴──────────────┘            │
-│                                 │                                    │
-│  ┌──────────────────────────────┼───────────────────────────────┐   │
-│  │                    核心引擎层 (Core Engine)                    │   │
-│  │                              │                                │   │
-│  │   ┌──────────────────────────┼────────────────────────────┐  │   │
-│  │   │              编排引擎 (Orchestrator)                    │  │   │
-│  │   │   ┌──────────┐  ┌──────────┐  ┌──────────────────┐   │  │   │
-│  │   │   │  Task    │  │  Agent   │  │   Context        │   │  │   │
-│  │   │   │ Manager  │  │ Registry │  │   Manager        │   │  │   │
-│  │   │   └──────────┘  └──────────┘  └──────────────────┘   │  │   │
-│  │   └───────────────────────────────────────────────────────┘  │   │
-│  │                                                              │   │
-│  │   ┌──────────────────────────────────────────────────────┐   │   │
-│  │   │                专业子Agent (Sub-Agents)                │   │   │
-│  │   │  ┌─────────┐ ┌──────────┐ ┌─────────┐ ┌──────────┐  │   │   │
-│  │   │  │ Triage  │ │Investi-  │ │Response │ │ Report   │  │   │   │
-│  │   │  │ Agent   │ │gation    │ │ Agent   │ │  Agent   │  │   │   │
-│  │   │  │         │ │ Agent    │ │         │ │          │  │   │   │
-│  │   │  └─────────┘ └──────────┘ └─────────┘ └──────────┘  │   │   │
-│  │   │  ┌─────────┐ ┌──────────┐ ┌──────────────────────┐  │   │   │
-│  │   │  │ Intel   │ │Compliance│ │   Custom Agents      │  │   │   │
-│  │   │  │ Agent   │ │ Agent    │ │   (用户自定义)        │  │   │   │
-│  │   │  └─────────┘ └──────────┘ └──────────────────────┘  │   │   │
-│  │   └──────────────────────────────────────────────────────┘   │   │
-│  └──────────────────────────────────────────────────────────────┘   │
-│                                 │                                    │
-│  ┌──────────────────────────────┼───────────────────────────────┐   │
-│  │                    工具接入层 (Tool Layer)                      │   │
-│  │                              │                                │   │
-│  │   ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐   │   │
-│  │   │   MCP    │  │  Skill   │  │   API    │  │  Plugin  │   │   │
-│  │   │  Server  │  │  Engine  │  │ Gateway  │  │  System  │   │   │
-│  │   └──────────┘  └──────────┘  └──────────┘  └──────────┘   │   │
-│  └──────────────────────────────────────────────────────────────┘   │
-│                                 │                                    │
-│  ┌──────────────────────────────┼───────────────────────────────┐   │
-│  │                    数据层 (Data Layer)                          │   │
-│  │                              │                                │   │
-│  │   ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐   │   │
-│  │   │ Case DB  │  │ Alert DB │  │  Vector  │  │  Config  │   │   │
-│  │   │(结构化)  │  │ (时序)    │  │   Store  │  │   DB     │   │   │
-│  │   └──────────┘  └──────────┘  └──────────┘  └──────────┘   │   │
-│  └──────────────────────────────────────────────────────────────┘   │
-│                                                                     │
-│  ┌──────────────────────────────────────────────────────────────┐   │
-│  │                  外部集成层 (Integration Layer)                 │   │
-│  │  ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐    │   │
-│  │  │ SIEM   │ │  EDR   │ │  WAF   │ │  TIP   │ │ FW/LB  │    │   │
-│  │  └────────┘ └────────┘ └────────┘ └────────┘ └────────┘    │   │
-│  └──────────────────────────────────────────────────────────────┘   │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
+```mermaid
+graph TB
+    subgraph 交互层
+        CLI[CLI 命令行]
+        TUI[TUI 终端界面]
+        REST[REST API]
+        WEB[Web 前端]
+    end
+
+    subgraph 核心引擎层
+        subgraph 编排引擎 Orchestrator
+            TM[Task Manager]
+            AR[Agent Registry]
+            CM[Context Manager]
+        end
+        subgraph 专业子Agent
+            TA[Triage Agent]
+            IA[Investigation Agent]
+            RA[Response Agent]
+            RPA[Report Agent]
+            INA[Intel Agent]
+            CA[Compliance Agent]
+        end
+    end
+
+    subgraph 工具接入层
+        MCP[MCP Server]
+        SKILL[Skill Engine]
+        APIGW[API Gateway]
+        PLUGIN[Plugin System]
+    end
+
+    subgraph 数据层
+        CDB[Case DB]
+        ADB[Alert DB]
+        VS[Vector Store]
+        CFG[Config DB]
+    end
+
+    subgraph 外部集成层
+        SIEM[SIEM]
+        EDR[EDR]
+        WAF[WAF]
+        TIP[TIP]
+        FW[FW/LB]
+    end
+
+    CLI --> 编排引擎
+    TUI --> 编排引擎
+    REST --> 编排引擎
+    WEB --> 编排引擎
+    编排引擎 --> 专业子Agent
+    专业子Agent --> 工具接入层
+    工具接入层 --> 数据层
+    工具接入层 --> 外部集成层
 ```
 
 ### 1.2 核心模块职责
@@ -91,40 +80,28 @@
 
 **告警接入 → Case创建 流程**：
 
-```
-安全设备 → 数据源适配器 → 统一告警格式 → 告警存储
-                                              │
-                                              ▼
-                                    聚合引擎（规则+AI）
-                                              │
-                                              ▼
-                                    已有Case? ──是──→ 追加告警到Case
-                                      │
-                                      否
-                                      │
-                                      ▼
-                                  创建新Case → TriageAgent初步研判
-                                                    │
-                                                    ▼
-                                              分配给分析师
+```mermaid
+flowchart LR
+    A[安全设备] --> B[数据源适配器] --> C[统一告警格式] --> D[告警存储]
+    D --> E[聚合引擎<br>规则+AI]
+    E -->|已有Case| F[追加告警到Case]
+    E -->|无匹配| G[创建新Case]
+    G --> H[TriageAgent 初步研判]
+    H --> I[分配给分析师]
 ```
 
 **Case调查流程**：
 
-```
-分析师打开Case → InvestigationAgent启动
-                      │
-                      ├─→ 查询关联资产信息
-                      ├─→ 检索威胁情报
-                      ├─→ 分析日志时序
-                      ├─→ 检索历史相似Case
-                      └─→ 生成调查报告
-                              │
-                              ▼
-                    ResponseAgent推荐响应方案
-                              │
-                              ▼
-                    分析师审批 → 执行响应动作
+```mermaid
+flowchart TD
+    A[分析师打开Case] --> B[InvestigationAgent 启动]
+    B --> C[查询关联资产信息]
+    B --> D[检索威胁情报]
+    B --> E[分析日志时序]
+    B --> F[检索历史相似Case]
+    C & D & E & F --> G[生成调查报告]
+    G --> H[ResponseAgent 推荐响应方案]
+    H --> I[分析师审批] --> J[执行响应动作]
 ```
 
 ---
@@ -284,12 +261,10 @@ class Orchestrator:
 
 Agent间通过**共享上下文**和**事件总线**通信：
 
-```
-┌──────────┐     Context      ┌──────────┐
-│  Agent A │ ───────────────→ │  Agent B │
-│          │                  │          │
-│          │ ── Event Bus ──→ │          │
-└──────────┘                  └──────────┘
+```mermaid
+graph LR
+    A[Agent A] -->|Context| B[Agent B]
+    A -->|Event Bus| B
 ```
 
 **Event Bus设计**：
@@ -505,27 +480,35 @@ class DataSourceAdapter(ABC):
         ...
 
     @abstractmethod
-    async def fetch_alerts(self, since: datetime) -> list[RawAlert]:
-        """拉取告警"""
+    async def fetch_alerts(self, since: datetime) -> list[dict]:
+        """拉取原始告警数据"""
         ...
 
     @abstractmethod
-    async def normalize(self, raw: RawAlert) -> Alert:
+    async def normalize(self, raw: dict) -> Alert:
         """标准化为统一格式"""
         ...
 
-# 内置适配器
-BUILTIN_ADAPTERS = {
-    "syslog": SyslogAdapter,           # Syslog通用解析
-    "cef": CEFAdapter,                  # CEF格式解析
-    "leef": LEEFAdapter,               # LEEF格式解析
-    "elastic": ElasticsearchAdapter,    # Elasticsearch API
-    "splunk": SplunkAdapter,            # Splunk API
-    "qradar": QRadarAdapter,           # QRadar API
-    "crowdstrike": CrowdStrikeAdapter, # CrowdStrike EDR
-    "sentinel": SentinelAdapter,        # Microsoft Sentinel
-}
+    async def poll(self, since: datetime) -> list[Alert]:
+        """拉取并标准化告警"""
+        ...
 ```
+
+**已实现的适配器**：
+
+| 适配器 | 类型 | 说明 |
+| --- | --- | --- |
+| `RestApiAdapter` | rest_api | 通用 REST API 拉取，支持 bearer/api_key/basic 认证 |
+| `KafkaAdapter` | kafka | Kafka 消费，适用于内网 SIEM |
+| `SyslogAdapter` | syslog | Syslog 文件监听 |
+| `JSONFileAdapter` | json_file | JSON 文件导入（测试用） |
+
+**DataSourceManager**（`core/datasource_manager.py`）负责在应用启动时：
+
+1. 遍历 `config.yaml` 中 `datasources` 下所有 `enabled: true` 的数据源
+2. 通过 `AdapterRegistry` 创建对应适配器实例并调用 `connect()`
+3. 为每个数据源启动 `asyncio` 后台轮询任务，按 `poll_interval`（秒）周期调用 `adapter.poll()`
+4. 拉取到的告警送入 `Orchestrator.handle_alert()` 进入聚合→建案→研判流程
 
 ---
 
@@ -533,54 +516,82 @@ BUILTIN_ADAPTERS = {
 
 ### 4.1 数据模型 (ER图)
 
-```
-┌─────────────┐       ┌─────────────────┐       ┌─────────────┐
-│   Alert     │       │   CaseAlert     │       │    Case     │
-├─────────────┤       ├─────────────────┤       ├─────────────┤
-│ alert_id PK │──┐    │ case_id FK      │    ┌──│ case_id PK  │
-│ source      │  └───→│ alert_id FK     │←───┘  │ title       │
-│ rule_id     │       │ aggregated_at   │       │ severity    │
-│ severity    │       │ aggregate_reason│       │ status      │
-│ timestamp   │       └─────────────────┘       │ priority    │
-│ src_ip      │                                 │ assignee_id │
-│ dst_ip      │       ┌─────────────────┐       │ ai_summary  │
-│ raw_log     │       │  CaseAsset      │       │ created_at  │
-│ case_id FK  │       ├─────────────────┤       │ updated_at  │
-└─────────────┘    ┌──│ case_id FK      │       │ closed_at   │
-                   │  │ asset_id FK     │       └──────┬──────┘
-┌─────────────┐    │  │ relation_type   │              │
-│    Asset    │    │  └─────────────────┘              │
-├─────────────┤    │                                   │
-│ asset_id PK │←───┘       ┌─────────────────┐        │
-│ hostname    │            │   CaseIoC       │        │
-│ ip_address  │            ├─────────────────┤        │
-│ os          │            │ case_id FK      │←───────┘
-│ owner       │       ┌───→│ ioc_id FK       │
-│ criticality │       │    │ added_at        │
-│ tags        │       │    └─────────────────┘
-└─────────────┘       │
-                      │    ┌─────────────────┐
-┌─────────────┐       │    │   CaseEvent     │
-│     IoC     │       │    ├─────────────────┤
-├─────────────┤       │    │ event_id PK     │
-│ ioc_id PK   │←──────┘    │ case_id FK      │
-│ type        │            │ timestamp       │
-│ value       │            │ event_type      │
-│ confidence  │            │ actor           │
-│ source      │            │ detail          │
-│ first_seen  │            └─────────────────┘
-│ last_seen   │
-└─────────────┘            ┌─────────────────┐
-                           │   PlaybookRun   │
-┌─────────────┐            ├─────────────────┤
-│  Playbook   │            │ run_id PK       │
-├─────────────┤            │ case_id FK      │
-│ playbook_id │←──────────→│ playbook_id FK  │
-│ name        │            │ status          │
-│ yaml_def    │            │ started_at      │
-│ version     │            │ completed_at    │
-│ risk_level  │            │ approval_status │
-└─────────────┘            └─────────────────┘
+```mermaid
+erDiagram
+    Alert ||--o| Case : "case_id"
+    Case ||--o{ CaseEvent : "case_id"
+    Case ||--o{ CaseAsset : "case_id"
+    Case ||--o{ CaseIoC : "case_id"
+    Case ||--o{ PlaybookRun : "case_id"
+    Asset ||--o{ CaseAsset : "asset_id"
+    IoC ||--o{ CaseIoC : "ioc_id"
+    Playbook ||--o{ PlaybookRun : "playbook_id"
+
+    Alert {
+        text alert_id PK
+        text source
+        text rule_id
+        text severity
+        timestamp timestamp
+        text src_ip
+        text dst_ip
+        text raw_log
+        text case_id FK
+    }
+
+    Case {
+        text case_id PK
+        text title
+        text severity
+        text status
+        int priority
+        text assignee_id
+        text ai_summary
+        timestamp created_at
+        timestamp updated_at
+        timestamp closed_at
+    }
+
+    Asset {
+        text asset_id PK
+        text hostname
+        text ip_address
+        text os
+        text owner
+        text criticality
+    }
+
+    IoC {
+        text ioc_id PK
+        text type
+        text value
+        real confidence
+        text source
+    }
+
+    CaseEvent {
+        text event_id PK
+        text case_id FK
+        timestamp timestamp
+        text event_type
+        text actor
+    }
+
+    Playbook {
+        text playbook_id PK
+        text name
+        text version
+        text risk_level
+    }
+
+    PlaybookRun {
+        text run_id PK
+        text case_id FK
+        text playbook_id FK
+        text status
+        timestamp started_at
+        timestamp completed_at
+    }
 ```
 
 ### 4.2 Case聚合逻辑
@@ -1354,11 +1365,16 @@ tools:
 
 ## 10. 项目结构
 
-```
+```text
 aicso/
 ├── README.md
+├── CLAUDE.md                        # Claude Code 项目规范
 ├── LICENSE                          # Apache 2.0
 ├── pyproject.toml                   # 项目配置、依赖管理
+├── config.yaml                      # 运行时配置（不入版本控制）
+├── start_web.py                     # Web 服务启动入口
+├── Dockerfile
+├── docker-compose.yml
 ├── docs/
 │   ├── PRD.md
 │   ├── TECHNICAL_DESIGN.md
@@ -1366,93 +1382,63 @@ aicso/
 ├── src/
 │   └── aicso/
 │       ├── __init__.py
-│       ├── cli/                     # CLI命令
-│       │   ├── __init__.py
-│       │   ├── app.py              # Typer应用入口
-│       │   ├── case.py             # Case相关命令
-│       │   ├── alert.py            # Alert相关命令
-│       │   ├── agent.py            # Agent相关命令
-│       │   └── config.py           # 配置命令
-│       ├── tui/                     # TUI界面
-│       │   ├── __init__.py
-│       │   ├── app.py              # Textual应用
-│       │   ├── screens/
-│       │   └── widgets/
+│       ├── __main__.py
+│       ├── config.py                # 全局配置（Pydantic）
+│       ├── cli/                     # CLI 命令
+│       │   ├── case.py
+│       │   ├── alert.py
+│       │   ├── agent.py
+│       │   └── datasource.py
+│       ├── api/                     # Web API（FastAPI）
+│       │   ├── app.py               # FastAPI 应用入口
+│       │   ├── deps.py              # 依赖注入 / AppState
+│       │   └── routes/
+│       │       ├── alert.py
+│       │       ├── agent.py
+│       │       ├── case.py
+│       │       ├── datasource.py
+│       │       └── aggregator.py
 │       ├── core/                    # 核心引擎
-│       │   ├── __init__.py
-│       │   ├── orchestrator.py     # 编排引擎
-│       │   ├── context.py          # 上下文管理
-│       │   ├── task.py             # 任务管理
-│       │   └── approval.py         # 审批引擎
-│       ├── agents/                  # Agent实现
-│       │   ├── __init__.py
-│       │   ├── base.py             # Agent基类
-│       │   ├── triage.py           # 分诊Agent
-│       │   ├── investigation.py    # 调查Agent
-│       │   ├── response.py         # 响应Agent
-│       │   ├── intel.py            # 情报Agent
-│       │   ├── report.py           # 报告Agent
-│       │   └── compliance.py       # 合规Agent
+│       │   ├── orchestrator.py      # 编排引擎
+│       │   ├── context.py           # 上下文管理
+│       │   ├── event_bus.py         # 事件总线
+│       │   ├── approval.py          # 审批引擎
+│       │   └── datasource_manager.py # 数据源管理器（周期拉取）
+│       ├── agents/                  # Agent 实现
+│       │   ├── base.py              # Agent 基类
+│       │   ├── triage.py            # 分诊 Agent
+│       │   ├── investigation.py     # 调查 Agent
+│       │   ├── response.py          # 响应 Agent
+│       │   ├── intel.py             # 情报 Agent
+│       │   └── report.py            # 报告 Agent
 │       ├── models/                  # 数据模型
-│       │   ├── __init__.py
 │       │   ├── case.py
 │       │   ├── alert.py
 │       │   ├── asset.py
 │       │   ├── ioc.py
 │       │   └── playbook.py
 │       ├── store/                   # 存储层
-│       │   ├── __init__.py
-│       │   ├── database.py         # 数据库连接
+│       │   ├── database.py          # SQLite 异步连接
 │       │   ├── case_store.py
 │       │   ├── alert_store.py
-│       │   └── vector_store.py     # 向量存储
-│       ├── tools/                   # 内置工具
-│       │   ├── __init__.py
-│       │   ├── registry.py         # 工具注册中心
-│       │   ├── mcp_client.py       # MCP客户端
-│       │   └── builtin/            # 内置工具实现
+│       │   └── vector_store.py      # ChromaDB 向量存储
 │       ├── adapters/                # 数据源适配器
-│       │   ├── __init__.py
-│       │   ├── base.py
-│       │   ├── syslog.py
-│       │   ├── elastic.py
-│       │   └── ...
+│       │   ├── base.py              # 适配器基类
+│       │   ├── rest_api.py          # REST API 适配器
+│       │   ├── kafka.py             # Kafka 适配器
+│       │   └── registry.py          # 适配器注册中心
 │       ├── aggregator/              # 告警聚合
-│       │   ├── __init__.py
-│       │   ├── engine.py           # 聚合引擎
-│       │   ├── rules.py            # 规则引擎
-│       │   └── ai.py               # AI聚合
-│       ├── playbook/                # Playbook引擎
-│       │   ├── __init__.py
-│       │   ├── engine.py
+│       │   └── engine.py            # 规则+AI 双引擎聚合
+│       ├── playbook/                # Playbook 引擎
 │       │   ├── parser.py
 │       │   └── executor.py
-│       ├── security/                # 安全模块
-│       │   ├── __init__.py
-│       │   ├── auth.py
-│       │   ├── rbac.py
-│       │   ├── audit.py
-│       │   └── prompt_guard.py
-│       ├── api/                     # REST API（Phase 2+）
-│       │   ├── __init__.py
-│       │   └── app.py
-│       └── config.py               # 全局配置
-├── skills/                          # 内置Skills
-│   ├── phishing-response/
-│   ├── vuln-management/
-│   └── threat-hunting/
-├── playbooks/                       # 内置Playbook模板
-│   ├── phishing.yaml
-│   ├── brute-force.yaml
-│   └── malware.yaml
-├── tests/                           # 测试
+│       ├── tools/
+│       ├── tui/                     # TUI 界面（规划中）
+│       └── security/                # 安全模块（规划中）
+├── tests/
 │   ├── unit/
-│   ├── integration/
-│   └── e2e/
-├── docker/                          # Docker配置
-│   ├── Dockerfile
-│   └── docker-compose.yml
-└── scripts/                         # 辅助脚本
+│   └── integration/
+└── scripts/
     ├── init_db.py
     └── seed_data.py
 ```
@@ -1463,31 +1449,21 @@ aicso/
 
 ### 11.1 单机部署（MVP/开发）
 
-```
-┌─────────────────────────────────────┐
-│           单机部署                    │
-│                                     │
-│   ┌─────────────────────────────┐   │
-│   │        AiCSO 进程            │   │
-│   │   CLI / TUI / API Server    │   │
-│   └──────────────┬──────────────┘   │
-│                  │                  │
-│   ┌──────────────┼──────────────┐   │
-│   │              │              │   │
-│   │   ┌─────────┐│┌──────────┐  │   │
-│   │   │ SQLite  │││ ChromaDB │  │   │
-│   │   └─────────┘│└──────────┘  │   │
-│   │              │              │   │
-│   └──────────────┼──────────────┘   │
-│                  │                  │
-│   ┌──────────────┴──────────────┐   │
-│   │      MCP Servers (本地)      │   │
-│   │  ┌──────┐ ┌──────┐ ┌──────┐│   │
-│   │  │TIP   │ │EDR   │ │Custom││   │
-│   │  └──────┘ └──────┘ └──────┘│   │
-│   └─────────────────────────────┘   │
-│                                     │
-└─────────────────────────────────────┘
+```mermaid
+graph TB
+    subgraph AiCSO 进程
+        CLI[CLI / TUI / API Server]
+        CLI --> SQLite[(SQLite)]
+        CLI --> ChromaDB[(ChromaDB)]
+    end
+
+    subgraph MCP Servers 本地
+        TIP[TIP]
+        EDR[EDR]
+        CUSTOM[Custom]
+    end
+
+    CLI --> MCP Servers
 ```
 
 ### 11.2 容器化部署（生产）
