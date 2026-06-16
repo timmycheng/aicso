@@ -50,3 +50,11 @@ async def api_datasource_list(state: AppState = Depends(get_state)):
 async def api_datasource_types():
     from aicso.adapters.registry import datasource_registry
     return {"types": datasource_registry.list_types()}
+
+
+@router.get("/api/status")
+async def api_datasource_status(state: AppState = Depends(get_state)):
+    """查看所有已连接数据源的运行状态"""
+    if not state.datasource_manager:
+        return {"datasources": [], "message": "数据源管理器未启动"}
+    return {"datasources": state.datasource_manager.list_status()}

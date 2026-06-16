@@ -2,13 +2,15 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Optional
 
 from fastapi import Request
 
 from aicso.config import AppConfig, load_config
 from aicso.core.approval import ApprovalEngine
 from aicso.core.context import ContextManager
+from aicso.core.datasource_manager import DataSourceManager
 from aicso.core.event_bus import EventBus
 from aicso.core.orchestrator import Orchestrator
 from aicso.store.alert_store import AlertStore
@@ -26,6 +28,7 @@ class AppState:
     context_manager: ContextManager
     approval_engine: ApprovalEngine
     orchestrator: Orchestrator
+    datasource_manager: Optional[DataSourceManager] = None
 
 
 async def _restore_aggregation_rules(state: AppState) -> None:
@@ -105,10 +108,18 @@ async def init_app_state(config_path: str = "config.yaml") -> AppState:
     # 从数据库恢复聚合规则到内存
     await _restore_aggregation_rules(state)
 
+    # 启动数据源管理器（周期拉取告警）
+    if config.datasources:
+        datasource_manager = DataSourceManager(config, orchestrator)
+        await datasource_manager.start()
+        state.datasource_manager = datasource_manager
+
     return state
 
 
 async def close_app_state(state: AppState) -> None:
+    if state.datasource_manager:
+        await state.datasource_manager.stop()
     await state.orchestrator.close()
     await state.orchestrator.aggregator.stop()
     await state.db.flush_and_close()

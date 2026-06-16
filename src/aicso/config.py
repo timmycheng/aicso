@@ -63,6 +63,7 @@ class DataSourceConfig(BaseModel):
     enabled: bool = True
     description: str = ""
     config: dict = Field(default_factory=dict)
+    poll_interval: int = 60  # 周期拉取间隔（秒），0=不轮询
 
 
 class AppConfig(BaseModel):
