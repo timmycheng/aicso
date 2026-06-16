@@ -2,8 +2,8 @@
 
 ## 工作流
 
-- 每个问题解决后，必须 `git commit` 并 `git push` 到远程仓库
-- git 提交规范参考 coventional commits
+- 每个问题解决后，必须 `git commit` 并 `git push` 到远程仓库，提交规范参考 coventional commits
+- 针对对话界面提出的功能新增，先过一遍/docs里的材料，若材料没有提及，在完成功能需求的同时，记录到对应文档内
 
 ## 总体要求
 
