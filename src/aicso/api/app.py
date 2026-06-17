@@ -63,7 +63,9 @@ async def index(request: Request):
 def main():
     """启动Web服务"""
     from aicso.config import load_config
+    from aicso.logging import setup_logging
     config = load_config()
+    setup_logging(level=config.logging.level)
     uvicorn.run(
         "aicso.api.app:app",
         host=config.server.host,

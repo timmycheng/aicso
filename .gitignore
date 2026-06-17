@@ -15,6 +15,7 @@ build/
 
 # Logs
 *.log
+logs/
 server.log
 server_err.log
 
