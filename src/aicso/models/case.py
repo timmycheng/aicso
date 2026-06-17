@@ -262,7 +262,7 @@ class Case(BaseModel):
     def _create_event(self, event_type: str, actor: str, detail: dict) -> CaseEvent:
         """创建事件的内部方法"""
         event = CaseEvent(
-            event_id=f"evt-{len(self.timeline) + 1:06d}",
+            event_id=f"{self.case_id}-evt-{len(self.timeline) + 1:06d}",
             event_type=event_type,
             actor=actor,
             detail=detail,
