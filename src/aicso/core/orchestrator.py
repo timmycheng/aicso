@@ -15,7 +15,7 @@ from aicso.core.approval import ApprovalEngine
 from aicso.core.context import ContextManager
 from aicso.core.event_bus import EventBus, Event, EventType
 from aicso.models.alert import Alert
-from aicso.models.case import Case, CasePriority, CaseSeverity, CaseStatus, SEVERITY_PRIORITY_MAP, SLA_CONFIG
+from aicso.models.case import Case, CaseEvent, CasePriority, CaseSeverity, CaseStatus, SEVERITY_PRIORITY_MAP, SLA_CONFIG
 from aicso.store.case_store import CaseStore
 from aicso.store.alert_store import AlertStore
 
@@ -110,6 +110,25 @@ class Orchestrator:
         match = await self.aggregator.try_aggregate(alert)
         if match:
             await self.alert_store.update_case_id(alert.alert_id, match.case_id)
+
+            # 记录告警关联事件到已有Case
+            case_data = await self.case_store.get(match.case_id)
+            if case_data:
+                case = Case(
+                    case_id=case_data["case_id"],
+                    title=case_data["title"],
+                    severity=CaseSeverity(case_data["severity"]),
+                    status=CaseStatus(case_data["status"]),
+                    priority=CasePriority(case_data["priority"]),
+                    assignee_id=case_data.get("assignee_id"),
+                    resolution=case_data.get("resolution"),
+                )
+                agg_event = case.add_alert(
+                    alert,
+                    reason=f"聚合匹配: {match.source} ({match.dimension}={match.key})"
+                )
+                await self.case_store.add_event(match.case_id, agg_event)
+
             logger.info(
                 "orchestrator.alert_aggregated",
                 alert_id=alert.alert_id,
@@ -159,9 +178,17 @@ class Orchestrator:
                         priority=CasePriority(case_data["priority"]),
                         assignee_id=case_data.get("assignee_id"),
                         resolution=case_data.get("resolution"),
-                        ai_summary=result.output.get("summary", ""),
-                        ai_recommendation=", ".join(result.recommended_actions),
+                        metadata=case_data.get("metadata", {}),
                     )
+
+                    # 记录AI分诊完成事件
+                    summary = result.output.get("summary", "")
+                    recommendation = ", ".join(result.recommended_actions)
+                    triage_event = case.record_ai_triage(summary, recommendation)
+                    await self.case_store.add_event(case_id, triage_event)
+
+                    case.ai_summary = summary
+                    case.ai_recommendation = recommendation
                     await self.case_store.update(case)
 
                 # 应用AI生成的聚合规则
@@ -177,6 +204,22 @@ class Orchestrator:
                             generated_by="triage_agent",
                         )
                         self.aggregator.set_ai_rule(case_id, rule)
+
+                        # 记录AI规则生成事件
+                        rule_info = {
+                            "dimensions": dimensions,
+                            "window_minutes": rule.window_minutes,
+                            "label": rule.label,
+                            "generated_by": rule.generated_by,
+                        }
+                        if case_data:
+                            rule_event = CaseEvent(
+                                event_id=f"evt-ai-rule-{case_id}",
+                                event_type="ai_rule_generated",
+                                actor="triage_agent",
+                                detail=rule_info,
+                            )
+                            await self.case_store.add_event(case_id, rule_event)
 
                         # 将触发告警注册到AI规则缓存
                         for dim in dimensions:
@@ -283,16 +326,15 @@ class Orchestrator:
         )
 
         immediate_key = _build_key(alert, IMMEDIATE_DIMENSION) or ""
-        metadata = {
-            "aggregation_rule": {
-                "source": "immediate",
-                "dimensions": [IMMEDIATE_DIMENSION],
-                "label": "同源IP+同目标IP(即时,10min)",
-                "window_minutes": 10,
-                "generated_by": "system",
-                "key": immediate_key,
-            },
+        rule_info = {
+            "source": "immediate",
+            "dimensions": [IMMEDIATE_DIMENSION],
+            "label": "同源IP+同目标IP(即时,10min)",
+            "window_minutes": 10,
+            "generated_by": "system",
+            "key": immediate_key,
         }
+        metadata = {"aggregation_rule": rule_info}
 
         case = Case(
             case_id=f"CSO-{datetime.utcnow().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}",
@@ -302,13 +344,23 @@ class Orchestrator:
             priority=SEVERITY_PRIORITY_MAP.get(severity, 3),
             metadata=metadata,
         )
+
+        # 记录Case创建事件
+        case.record_case_created(source="auto_from_alert")
+        # 记录告警关联事件
         case.add_alert(alert, reason="auto_created")
+        # 记录聚合规则创建事件
+        case.record_aggregation_rule_created(rule_info)
 
         sla_mins = SLA_CONFIG.get(case.priority, (0, 0))[0]
         if sla_mins > 0:
             case.sla_deadline = datetime.utcnow() + timedelta(minutes=sla_mins)
 
         await self.case_store.create(case)
+        # 持久化所有事件
+        for event in case.timeline:
+            await self.case_store.add_event(case.case_id, event)
+
         await self.alert_store.update_case_id(alert.alert_id, case.case_id)
         await self.event_bus.publish(Event(
             event_type=EventType.CASE_CREATED,

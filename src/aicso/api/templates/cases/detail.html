@@ -99,51 +99,116 @@
     </form>
 </div>
 
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
-    <div class="card">
-        <h2>关联告警 ({{ alerts|length }})</h2>
-        {% if alerts %}
-        <table>
-            <thead>
-                <tr>
-                    <th>Alert ID</th>
-                    <th>规则</th>
-                    <th>级别</th>
-                    <th>源IP</th>
-                    <th>目标IP</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for a in alerts %}
-                <tr>
-                    <td><a href="/alerts/{{ a.alert_id }}">{{ a.alert_id[:20] }}</a></td>
-                    <td>{{ a.rule_name or 'N/A' }}</td>
-                    <td><span class="badge badge-{{ a.severity }}">{{ a.severity }}</span></td>
-                    <td>{{ a.src_ip or '-' }}</td>
-                    <td>{{ a.dst_ip or '-' }}</td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-        {% else %}
-        <p style="color:#999;">暂无关联告警</p>
-        {% endif %}
-    </div>
-
-    <div class="card">
-        <h2>事件时间线 ({{ events|length }})</h2>
-        {% if events %}
-        <div class="timeline">
-            {% for e in events[-15:]|reverse %}
-            <div class="timeline-item">
-                <div class="time">{{ (e.timestamp|string)[:19] if e.timestamp else '' }}</div>
-                <div class="desc"><strong>{{ e.event_type }}</strong> by {{ e.actor or 'system' }}</div>
-            </div>
+<div class="card">
+    <h2>关联告警 ({{ alerts|length }})</h2>
+    {% if alerts %}
+    <table>
+        <thead>
+            <tr>
+                <th>Alert ID</th>
+                <th>规则</th>
+                <th>级别</th>
+                <th>源IP</th>
+                <th>目标IP</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for a in alerts %}
+            <tr>
+                <td><a href="/alerts/{{ a.alert_id }}">{{ a.alert_id[:20] }}</a></td>
+                <td>{{ a.rule_name or 'N/A' }}</td>
+                <td><span class="badge badge-{{ a.severity }}">{{ a.severity }}</span></td>
+                <td>{{ a.src_ip or '-' }}</td>
+                <td>{{ a.dst_ip or '-' }}</td>
+            </tr>
             {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p style="color:#999;">暂无关联告警</p>
+    {% endif %}
+</div>
+
+<div class="card">
+    <h2>事件时间线 ({{ events|length }})</h2>
+    {% if events %}
+    <div class="timeline-enhanced">
+        {% for e in events|reverse %}
+        {% set evt_type = e.event_type %}
+        {% set evt_color = event_colors.get(evt_type, '#666') %}
+        {% set evt_icon = event_icons.get(evt_type, '&#128196;') %}
+        {% set evt_label = event_labels.get(evt_type, evt_type) %}
+        <div class="timeline-entry" style="border-left-color: {{ evt_color }};">
+            <div class="timeline-header">
+                <span class="timeline-icon" style="background: {{ evt_color }};">{{ evt_icon|safe }}</span>
+                <span class="timeline-type" style="color: {{ evt_color }};">{{ evt_label }}</span>
+                <span class="timeline-actor">{{ e.actor or 'system' }}</span>
+                <span class="timeline-time">{{ (e.timestamp|string)[:19] if e.timestamp else '' }}</span>
+            </div>
+            {% if e.detail and e.detail is mapping %}
+            <div class="timeline-detail">
+                {% if evt_type == 'status_changed' or evt_type == 'case_reopened' %}
+                    <span class="badge badge-{{ e.detail.get('from', '') }}">{{ e.detail.get('from', '') }}</span>
+                    <span style="margin:0 6px;">→</span>
+                    <span class="badge badge-{{ e.detail.get('to', '') }}">{{ e.detail.get('to', '') }}</span>
+                    {% if e.detail.get('reason') %}
+                    <span class="timeline-reason">({{ e.detail.reason }})</span>
+                    {% endif %}
+                {% elif evt_type == 'alert_added' %}
+                    <span>告警 <code>{{ e.detail.get('alert_id', '')[:20] }}</code></span>
+                    {% if e.detail.get('rule_name') %}
+                    <span> - {{ e.detail.rule_name }}</span>
+                    {% endif %}
+                    {% if e.detail.get('reason') %}
+                    <span class="timeline-reason">({{ e.detail.reason }})</span>
+                    {% endif %}
+                {% elif evt_type == 'ai_triage_completed' %}
+                    {% if e.detail.get('summary') %}
+                    <div class="timeline-summary">{{ e.detail.summary[:200] }}{% if e.detail.summary|length > 200 %}...{% endif %}</div>
+                    {% endif %}
+                {% elif evt_type == 'ai_rule_generated' %}
+                    <span>规则: {{ e.detail.get('label', '') }}</span>
+                    {% if e.detail.get('dimensions') %}
+                    <span> | 维度: {{ e.detail.dimensions|join(', ') }}</span>
+                    {% endif %}
+                {% elif evt_type == 'aggregation_rule_created' or evt_type == 'aggregation_rule_updated' %}
+                    <span>{{ e.detail.get('label', '') }}</span>
+                    {% if e.detail.get('source') == 'ai_rule' %}
+                    <span class="badge badge-investigating">AI</span>
+                    {% else %}
+                    <span class="badge badge-medium">即时</span>
+                    {% endif %}
+                {% elif evt_type == 'assigned' or evt_type == 'unassigned' %}
+                    {% if e.detail.get('from') %}<span>从 {{ e.detail.from }}</span>{% endif %}
+                    {% if e.detail.get('to') %}<span> → {{ e.detail.to }}</span>{% endif %}
+                {% elif evt_type == 'priority_changed' %}
+                    <span>P{{ e.detail.get('from', '') }} → P{{ e.detail.get('to', '') }}</span>
+                {% elif evt_type == 'severity_changed' %}
+                    <span class="badge badge-{{ e.detail.get('from', '') }}">{{ e.detail.get('from', '') }}</span>
+                    <span style="margin:0 6px;">→</span>
+                    <span class="badge badge-{{ e.detail.get('to', '') }}">{{ e.detail.get('to', '') }}</span>
+                {% elif evt_type == 'note_added' %}
+                    <div class="timeline-note">{{ e.detail.get('note', '') }}</div>
+                {% elif evt_type == 'action_executed' %}
+                    <span>{{ e.detail.get('action_type', '') }} → {{ e.detail.get('target', '') }}</span>
+                    {% if e.detail.get('result') %}
+                    <span class="timeline-reason">结果: {{ e.detail.result }}</span>
+                    {% endif %}
+                {% elif evt_type == 'playbook_started' or evt_type == 'playbook_completed' or evt_type == 'playbook_failed' %}
+                    <span>Playbook: <code>{{ e.detail.get('playbook_id', '') }}</code></span>
+                    {% if e.detail.get('error') %}
+                    <span class="timeline-error">错误: {{ e.detail.error }}</span>
+                    {% endif %}
+                {% else %}
+                    <span class="timeline-detail-text">{{ e.detail|tojson }}</span>
+                {% endif %}
+            </div>
+            {% endif %}
         </div>
-        {% else %}
-        <p style="color:#999;">暂无事件</p>
-        {% endif %}
+        {% endfor %}
     </div>
+    {% else %}
+    <p style="color:#999;">暂无事件</p>
+    {% endif %}
 </div>
 {% endblock %}

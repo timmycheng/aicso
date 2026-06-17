@@ -40,7 +40,10 @@ async def _case_create(title: str, severity: str):
             status=CaseStatus.NEW,
             priority=SEVERITY_PRIORITY_MAP.get(sev, 3),
         )
+        # 记录Case创建事件
+        create_event = case.record_case_created(source="cli")
         await store.create(case)
+        await store.add_event(case.case_id, create_event)
         console.print(f"[green]OK[/] Case created: [bold]{case.case_id}[/]")
         console.print(f"  标题: {case.title}")
         console.print(f"  严重级别: {case.severity.value}")
@@ -188,13 +191,20 @@ async def _case_update(case_id: str, status: Optional[str], assignee: Optional[s
 
         if status:
             new_status = CaseStatus(status)
-            event = case.transition_to(new_status, actor="cli_user", reason="CLI update")
+            event = case.transition_to(new_status, actor="cli_user", reason="CLI更新")
             await store.add_event(case_id, event)
             console.print(f"[green]OK[/] Status updated: {case_data['status']} -> {status}")
 
-        if assignee:
-            case.assignee_id = assignee
-            console.print(f"[green]OK[/] Assignee updated: {assignee}")
+        if assignee is not None:
+            old_assignee = case.assignee_id
+            new_assignee = assignee or None
+            if old_assignee != new_assignee:
+                if new_assignee:
+                    event = case.assign(new_assignee, actor="cli_user", reason="CLI分配")
+                else:
+                    event = case.unassign(actor="cli_user", reason="CLI取消分配")
+                await store.add_event(case_id, event)
+                console.print(f"[green]OK[/] Assignee updated: {assignee}")
 
         if resolution:
             case.resolution = resolution

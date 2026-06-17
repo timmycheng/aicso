@@ -667,6 +667,84 @@ class CaseStateMachine:
         await self.update_case_status(case_id, target_status)
 ```
 
+### 4.4 Case时间线设计
+
+Case时间线记录了Case全生命周期的所有操作，用于审计追踪和事件回溯。
+
+#### 4.4.1 事件类型定义
+
+```python
+class CaseEventType(str, Enum):
+    # Case生命周期
+    CASE_CREATED = "case_created"
+    CASE_UPDATED = "case_updated"
+    CASE_CLOSED = "case_closed"
+    CASE_REOPENED = "case_reopened"
+
+    # 状态变更
+    STATUS_CHANGED = "status_changed"
+    PRIORITY_CHANGED = "priority_changed"
+    SEVERITY_CHANGED = "severity_changed"
+
+    # 告警关联
+    ALERT_ADDED = "alert_added"
+    ALERT_REMOVED = "alert_removed"
+    ALERT_FALSE_POSITIVE = "alert_false_positive"
+
+    # 分配与指派
+    ASSIGNED = "assigned"
+    UNASSIGNED = "unassigned"
+
+    # AI分析
+    AI_TRIAGE_COMPLETED = "ai_triage_completed"
+    AI_RULE_GENERATED = "ai_rule_generated"
+    AI_INVESTIGATION_COMPLETED = "ai_investigation_completed"
+    AI_REPORT_GENERATED = "ai_report_generated"
+
+    # 聚合规则
+    AGGREGATION_RULE_CREATED = "aggregation_rule_created"
+    AGGREGATION_RULE_UPDATED = "aggregation_rule_updated"
+
+    # 响应动作
+    ACTION_EXECUTED = "action_executed"
+    ACTION_APPROVED = "action_approved"
+    ACTION_REJECTED = "action_rejected"
+
+    # Playbook
+    PLAYBOOK_STARTED = "playbook_started"
+    PLAYBOOK_COMPLETED = "playbook_completed"
+    PLAYBOOK_FAILED = "playbook_failed"
+
+    # 备注
+    NOTE_ADDED = "note_added"
+
+    # 资产与IoC
+    ASSET_LINKED = "asset_linked"
+    IOC_ADDED = "ioc_added"
+```
+
+#### 4.4.2 事件记录时机
+
+| 事件类型 | 触发时机 | 记录位置 |
+|---------|---------|---------|
+| case_created | Case创建时 | Web API / CLI / Orchestrator |
+| status_changed | 状态转换时 | Case.transition_to() |
+| alert_added | 告警关联到Case时 | Case.add_alert() |
+| ai_triage_completed | TriageAgent完成时 | Orchestrator |
+| ai_rule_generated | AI聚合规则生成时 | Orchestrator |
+| assigned/unassigned | 分配/取消分配负责人时 | Case.assign()/unassign() |
+| note_added | 添加备注时 | Case.add_note() |
+
+#### 4.4.3 UI展示
+
+时间线在Case详情页以卡片形式展示，每个事件包含：
+
+- 事件类型图标和颜色
+- 事件类型名称
+- 操作者（user_id 或 agent_name）
+- 时间戳
+- 事件详情（根据类型格式化展示）
+
 ---
 
 ## 5. 存储设计
