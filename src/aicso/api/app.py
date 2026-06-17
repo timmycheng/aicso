@@ -71,6 +71,7 @@ def main():
         host=config.server.host,
         port=config.server.port,
         reload=True,
+        reload_excludes=["logs/*", "*.db", "*.db-*"],
     )
 
 
