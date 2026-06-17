@@ -71,7 +71,7 @@ def main():
         host=config.server.host,
         port=config.server.port,
         reload=True,
-        reload_excludes=["logs/*", "*.db", "*.db-*"],
+        reload_dirs=[str(Path(__file__).resolve().parent.parent.parent / "src")],
     )
 
 
