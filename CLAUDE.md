@@ -2,8 +2,9 @@
 
 ## 工作流
 
-- 每个问题解决后，必须 `git commit` 并 `git push` 到远程仓库，提交规范参考 coventional commits
 - 针对对话界面提出的功能新增，先过一遍/docs里的材料，若材料没有提及，在完成功能需求的同时，记录到对应文档内
+- 每个问题coding完成后，必须进行测试，且测试all pass，测试案例根据本次问题的逻辑进行编写，用pytest进行测试；测试全部通过后才视为问题解决。
+- 每个问题解决后，必须 `git commit` 并 `git push` 到远程仓库，提交规范参考 coventional commits。
 
 ## 总体要求
 
