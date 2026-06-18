@@ -226,3 +226,104 @@ class TestCleanup:
         )
         removed = agg.cleanup(max_age_hours=24)
         assert removed >= 1
+
+    def test_cleanup_respects_window_minutes(self):
+        """AI规则应在window_minutes后被清理，而非等待max_age_hours"""
+        agg = AlertAggregator()
+        rule = CaseAggregationRule(
+            case_id="CSO-001",
+            dimensions=["src_ip+rule_id"],
+            window_minutes=10,
+            label="短窗口规则",
+        )
+        # 模拟规则在15分钟前创建
+        rule.created_at = datetime.utcnow() - timedelta(minutes=15)
+        agg.set_ai_rule("CSO-001", rule)
+        agg._ai_cache["CSO-001:src_ip+rule_id:1.2.3.4:rule-001"] = datetime.utcnow()
+
+        # cleanup使用默认max_age_hours=24，但规则window_minutes=10已过期
+        removed = agg.cleanup(max_age_hours=24)
+        assert removed >= 1
+        assert "CSO-001" not in agg._ai_rules
+        assert "CSO-001:src_ip+rule_id:1.2.3.4:rule-001" not in agg._ai_cache
+
+
+class TestTimeBasedExpiration:
+    @pytest.mark.asyncio
+    async def test_immediate_cache_expires_after_window(self):
+        """即时缓存应在窗口过期后被移除"""
+        agg = AlertAggregator()
+        alert1 = Alert(
+            alert_id="A-001", source="test",
+            src_ip="1.2.3.4", dst_ip="10.0.0.1",
+        )
+        agg.register_immediate(alert1, "CSO-001")
+
+        # 模拟缓存条目在窗口过期后的时间
+        cache_key = f"{IMMEDIATE_DIMENSION}:1.2.3.4->10.0.0.1"
+        agg._immediate_cache[cache_key] = (
+            "CSO-001",
+            datetime.utcnow() - timedelta(minutes=IMMEDIATE_WINDOW_MINUTES + 1),
+        )
+
+        alert2 = Alert(
+            alert_id="A-002", source="test",
+            src_ip="1.2.3.4", dst_ip="10.0.0.1",
+        )
+        result = await agg.try_aggregate(alert2)
+        assert result is None
+        # 缓存条目应被移除
+        assert cache_key not in agg._immediate_cache
+
+    @pytest.mark.asyncio
+    async def test_ai_rule_expires_after_window(self):
+        """AI规则应在窗口过期后被移除"""
+        agg = AlertAggregator()
+        rule = CaseAggregationRule(
+            case_id="CSO-001",
+            dimensions=["src_ip+rule_id"],
+            window_minutes=10,
+            label="测试规则",
+        )
+        # 模拟规则在15分钟前创建
+        rule.created_at = datetime.utcnow() - timedelta(minutes=15)
+        agg.set_ai_rule("CSO-001", rule)
+        agg._ai_cache["CSO-001:src_ip+rule_id:1.2.3.4:rule-001"] = datetime.utcnow()
+
+        alert = Alert(
+            alert_id="A-001", source="test",
+            src_ip="1.2.3.4", rule_id="rule-001",
+        )
+        result = await agg.try_aggregate(alert)
+        assert result is None
+        # 规则和缓存应被移除
+        assert "CSO-001" not in agg._ai_rules
+        assert "CSO-001:src_ip+rule_id:1.2.3.4:rule-001" not in agg._ai_cache
+
+    @pytest.mark.asyncio
+    async def test_ai_rule_not_expired_still_matches(self):
+        """未过期的AI规则应正常匹配"""
+        agg = AlertAggregator()
+        rule = CaseAggregationRule(
+            case_id="CSO-001",
+            dimensions=["src_ip+rule_id"],
+            window_minutes=30,
+            label="测试规则",
+        )
+        agg.set_ai_rule("CSO-001", rule)
+
+        alert = Alert(
+            alert_id="A-001", source="test",
+            src_ip="1.2.3.4", rule_id="rule-001",
+        )
+        key = _build_key(alert, "src_ip+rule_id")
+        agg._ai_cache[f"CSO-001:src_ip+rule_id:{key}"] = datetime.utcnow()
+
+        alert2 = Alert(
+            alert_id="A-002", source="test",
+            src_ip="1.2.3.4", rule_id="rule-001",
+        )
+        result = await agg.try_aggregate(alert2)
+        assert result is not None
+        assert result.case_id == "CSO-001"
+        assert "CSO-001" in agg._ai_rules

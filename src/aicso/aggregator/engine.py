@@ -118,8 +118,10 @@ class AlertAggregator:
         now = datetime.utcnow()
 
         # 阶段2：检查所有Case的AI生成规则
+        expired_case_ids: list[str] = []
         for case_id, rule in self._ai_rules.items():
             if now - rule.created_at > timedelta(minutes=rule.window_minutes):
+                expired_case_ids.append(case_id)
                 continue
             for dimension in rule.dimensions:
                 key = _build_key(alert, dimension)
@@ -141,6 +143,16 @@ class AlertAggregator:
                         source="ai_rule",
                     )
 
+        # 清理过期的AI规则及其缓存
+        for case_id in expired_case_ids:
+            del self._ai_rules[case_id]
+            expired_cache_keys = [
+                k for k in self._ai_cache if k.startswith(f"{case_id}:")
+            ]
+            for k in expired_cache_keys:
+                del self._ai_cache[k]
+            logger.info("aggregator.ai_rule_expired", case_id=case_id)
+
         # 阶段1：即时兜底规则 src_ip+dst_ip
         key = _build_key(alert, IMMEDIATE_DIMENSION)
         if key:
@@ -161,6 +173,9 @@ class AlertAggregator:
                         rule_label=IMMEDIATE_LABEL,
                         source="immediate",
                     )
+                else:
+                    del self._immediate_cache[cache_key]
+                    logger.info("aggregator.immediate_expired", key=key)
 
         return None
 
@@ -209,7 +224,7 @@ class AlertAggregator:
         }
 
     def cleanup(self, max_age_hours: int = 24) -> int:
-        """清理过期缓存"""
+        """清理过期缓存，AI规则使用各自的window_minutes作为过期阈值"""
         now = datetime.utcnow()
         cutoff = now - timedelta(hours=max_age_hours)
         removed = 0
@@ -221,19 +236,30 @@ class AlertAggregator:
             del self._immediate_cache[k]
             removed += 1
 
-        expired_ai = [
-            k for k, ts in self._ai_cache.items() if ts < cutoff
-        ]
-        for k in expired_ai:
-            del self._ai_cache[k]
-            removed += 1
-
+        # AI规则使用各自的window_minutes过期
         expired_rules = [
             cid for cid, r in self._ai_rules.items()
-            if now - r.created_at > timedelta(hours=max_age_hours)
+            if now - r.created_at > timedelta(minutes=r.window_minutes)
         ]
         for cid in expired_rules:
             del self._ai_rules[cid]
+            # 清理关联的缓存
+            expired_cache_keys = [
+                k for k in self._ai_cache if k.startswith(f"{cid}:")
+            ]
+            for k in expired_cache_keys:
+                del self._ai_cache[k]
+                removed += 1
+            removed += 1
+
+        # 清理无归属的AI缓存（规则已不存在的）
+        orphan_keys = []
+        for k in self._ai_cache:
+            case_id = k.split(":")[0]
+            if case_id not in self._ai_rules:
+                orphan_keys.append(k)
+        for k in orphan_keys:
+            del self._ai_cache[k]
             removed += 1
 
         return removed
