@@ -345,15 +345,20 @@ class RouterEngine:
         self, alert: Alert, case_id: str, decision: RoutingDecision
     ) -> RoutingDecision:
         """汇入已有Case：更新告警行 + Case时间线 + 索引活跃度"""
-        # 防御：目标Case不存在（索引过期/DB被清理）→ 保守改走新建
-        case_row = await self.case_store.get(case_id)
-        if case_row is None:
-            logger.warning("router.target_case_missing", case_id=case_id,
-                           alert_id=alert.alert_id)
-            self.index.deactivate(case_id)
-            self.fallback.deactivate(case_id)
-            decision.detail["target_missing"] = case_id
-            return await self._apply_new_case(alert, decision)
+        # 防御：索引不认识目标Case（外部清理/长期失联）→ 保守改走新建。
+        # 索引成员判断即权威：新建Case先入索引后写库（写缓冲0.1s），避免
+        # 缓冲窗口内同批告警路由到刚建的Case被误判不存在
+        if not self.index.contains(case_id):
+            case_row = await self.case_store.get(case_id)
+            if case_row is None:
+                logger.warning("router.target_case_missing", case_id=case_id,
+                               alert_id=alert.alert_id)
+                self.index.deactivate(case_id)
+                self.fallback.deactivate(case_id)
+                decision.detail["target_missing"] = case_id
+                return await self._apply_new_case(alert, decision)
+            # DB里有但索引没有（如外部恢复的Case）→ 补进索引
+            self.index.add_case(case_id, case_row.get("title", case_id), entity_keys_of(alert))
 
         entity_keys = entity_keys_of(alert)
         await self.alert_store.mark_routed(
@@ -447,7 +452,8 @@ class RouterEngine:
             else CaseSeverity.MEDIUM
         )
         case = Case(
-            case_id=f"CSO-{datetime.utcnow().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}",
+            # 12位hex（48bit）：5000条/日规模下生日碰撞概率<1e-7
+            case_id=f"CSO-{datetime.utcnow().strftime('%Y%m%d')}-{uuid.uuid4().hex[:12].upper()}",
             title=f"[{alert.source}] {alert.rule_name or 'Unknown Alert'}",
             severity=severity,
             status=CaseStatus.NEW,
@@ -535,6 +541,7 @@ class RouterEngine:
             GROUP BY a.case_id, c.title, a.src_ip, a.dst_ip, a.rule_id
         """)
         count = self.index.rebuild(rows)
+        self.fallback.rebuild(rows)
         logger.info("router.index_rebuilt", active_cases=count)
         return count
 

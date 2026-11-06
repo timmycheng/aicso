@@ -117,6 +117,12 @@ class Database:
             await self._db.close()
             self._db = None
 
+    async def flush(self) -> int:
+        """手动flush写缓冲（读取前需要看到最新写入时用）"""
+        if self._write_buffer:
+            return await self._write_buffer.flush()
+        return 0
+
     async def close(self) -> None:
         if self._db:
             await self._db.close()
