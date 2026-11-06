@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from fastapi import Request
 from structlog import get_logger
 
+from aicso.cognition.dispatcher import S2Dispatcher
 from aicso.config import AppConfig, load_config
 from aicso.core.approval import ApprovalEngine
 from aicso.core.context import ContextManager
@@ -84,7 +85,9 @@ async def init_app_state(config_path: str = "config.yaml") -> AppState:
 
     orchestrator = Orchestrator(
         case_store, alert_store, context_manager, event_bus, approval_engine,
-        router=router_engine, max_concurrent_triage=config.routing.s2_concurrency,
+        router=router_engine,
+        dispatcher=S2Dispatcher(systemone_client, scfg),
+        max_concurrent_triage=config.routing.s2_concurrency,
         llm_enabled=config.llm.enabled,
     )
     router_engine.on_new_case = orchestrator.handle_new_case

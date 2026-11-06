@@ -87,7 +87,8 @@ class CaseStore:
                VALUES (?, ?, ?, ?, ?, ?)""",
             (
                 event.event_id, case_id, event.timestamp.isoformat(),
-                event.event_type, event.actor, json.dumps(event.detail),
+                event.event_type, event.actor,
+                json.dumps(event.detail, ensure_ascii=False),
             ),
         )
 
