@@ -324,7 +324,7 @@ MVP 单进程内实现，每个组件的接口按外置形态设计：
 | 判定引擎 | 象信云 API | 内网部署象信私有化端点（base_url 可配，已天然支持） | base_url 即缝 |
 | 执行形态 | uvicorn 单进程 monolith | ingest/router/s2 分进程部署 | 组件间已无共享可变状态（索引外置后） |
 
-多副本正确性前提（记录不实现）：partition key（如 src_ip hash）分片告警流 + case 所有权 lease，见 [issue #11](https://github.com/timmycheng/aicso/issues/11)。
+多副本正确性前提（记录不实现）：partition key（如 src_ip hash）分片告警流 + case 所有权 lease——**完整设计已独立成文：[SCALING_DESIGN.md](SCALING_DESIGN.md)**（分区拓扑、lease 协议、组件外置映射与阶段化迁移路径）。
 
 ---
 

@@ -216,6 +216,7 @@ docker compose up -d
 | [技术方案](docs/TECHNICAL_DESIGN.md) | 架构设计、Agent详细设计、接口定义、存储方案 |
 | [白皮书](docs/WHITEPAPER.md) | 产品理念、核心能力、典型场景、部署方案 |
 | [重构设计](docs/REFACTOR_DESIGN.md) | Case-centric流式重构：分流引擎（象信System One）、Case生长模型、生产化骨架 |
+| [扩展设计](docs/SCALING_DESIGN.md) | 多副本分区、Case所有权lease、组件外置映射与阶段化迁移路径 |
 
 ## 进行中的重构
 
