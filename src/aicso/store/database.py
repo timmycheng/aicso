@@ -87,7 +87,15 @@ class WriteBuffer:
 class Database:
     """SQLite异步数据库管理器"""
 
-    def __init__(self, db_path: str = "aicso.db"):
+    def __init__(self, db_path: str = "aicso.db", profile: str = "sqlite"):
+        # 存储profile缝（设计§12）：当前仅sqlite实现；
+        # postgres/ClickHouse profile 接入时在此工厂分派（issue #10）
+        if profile != "sqlite":
+            raise NotImplementedError(
+                f"存储profile '{profile}' 尚未实现：当前仅支持 sqlite。"
+                "postgres/ClickHouse 接入见 docs/REFACTOR_DESIGN.md §12"
+            )
+        self.profile = profile
         self.db_path = db_path
         self._db: aiosqlite.Connection | None = None
         self._write_buffer: WriteBuffer | None = None
