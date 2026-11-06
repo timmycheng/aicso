@@ -48,6 +48,31 @@ class AlertStore:
             (case_id, datetime.utcnow().isoformat(), source, alert_id),
         )
 
+    async def move_alerts(self, from_case_id: str, to_case_id: str,
+                          alert_ids: list[str] | None = None) -> int:
+        """批量迁移告警到另一Case（合并/拆分用）；返回受影响行数
+
+        alert_ids=None 时迁移该Case全部告警。
+        """
+        # 管理频次操作：直写拿rowcount（非热路径）
+        if alert_ids is None:
+            cursor = await self.db.execute(
+                "UPDATE alerts SET case_id = ? WHERE case_id = ?",
+                (to_case_id, from_case_id),
+            )
+            await self.db.commit()
+            return cursor.rowcount
+        if not alert_ids:
+            return 0
+        placeholders = ",".join("?" * len(alert_ids))
+        cursor = await self.db.execute(
+            f"""UPDATE alerts SET case_id = ?
+                WHERE case_id = ? AND alert_id IN ({placeholders})""",
+            (to_case_id, from_case_id, *alert_ids),
+        )
+        await self.db.commit()
+        return cursor.rowcount
+
     async def list_unrouted(self, limit: int = 10000) -> list[dict]:
         """未路由告警（重启回灌用，§5.6）"""
         return await self.db.fetch_all(
