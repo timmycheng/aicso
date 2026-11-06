@@ -89,6 +89,10 @@ class CaseRoutingIndex:
                 slot.entity_keys.add(key)
                 self._entity_map.setdefault(key, set()).add(case_id)
 
+    def contains(self, case_id: str) -> bool:
+        """Case是否在索引中活跃（路由防御检查用，避免每路由一次SELECT）"""
+        return case_id in self._slots
+
     def deactivate(self, case_id: str) -> None:
         """Case关闭/合并后移出候选（P2由CASE_STATUS_CHANGED事件驱动）"""
         slot = self._slots.pop(case_id, None)
@@ -117,6 +121,7 @@ class CaseRoutingIndex:
         """从DB行重建索引（重启恢复，§5.6）
 
         rows: [{case_id, summary, src_ip, dst_ip, rule_id, last_seen}]
+        同一Case可能多行（多条告警/多pair），实体取并集、时间取最新、hits累加。
         """
         self._slots.clear()
         self._entity_map.clear()
@@ -131,6 +136,16 @@ class CaseRoutingIndex:
                 entities.append(f"pair:{row['src_ip']}>{row['dst_ip']}")
             if row.get("rule_id"):
                 entities.append(f"rule:{row['rule_id']}")
+
+            existing = self._slots.get(case_id)
+            if existing is not None:
+                existing.entity_keys.update(entities)
+                parsed = _parse_ts(row.get("last_seen"))
+                if parsed and parsed > existing.last_seen:
+                    existing.last_seen = parsed
+                existing.hits += row.get("hits", 0)
+                continue
+
             slot = CaseSlot(
                 case_id=case_id,
                 summary=row.get("summary", case_id),

@@ -14,22 +14,25 @@ class CaseStore:
         self.db = db
 
     async def create(self, case: Case) -> None:
-        await self.db.execute(
+        # 走写缓冲（分流热路径高频建Case，直写commit是吞吐瓶颈）
+        # 注意：缓冲0.1s内落库；索引成员判断已兜底缓冲窗口内的路由竞态
+        await self.db.buffered_execute(
             """INSERT INTO cases (case_id, title, severity, status, priority, assignee_id,
                ai_summary, ai_recommendation, resolution, tags, metadata,
+               merged_into, split_from,
                created_at, updated_at, closed_at, sla_deadline)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 case.case_id, case.title, case.severity.value, case.status.value,
                 case.priority.value, case.assignee_id, case.ai_summary,
                 case.ai_recommendation, case.resolution,
                 json.dumps(case.tags), json.dumps(case.metadata),
+                case.merged_into, case.split_from,
                 case.created_at.isoformat(), case.updated_at.isoformat(),
                 case.closed_at.isoformat() if case.closed_at else None,
                 case.sla_deadline.isoformat() if case.sla_deadline else None,
             ),
         )
-        await self.db.commit()
 
     async def get(self, case_id: str) -> dict | None:
         return await self.db.fetch_one(

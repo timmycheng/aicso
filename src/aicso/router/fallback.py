@@ -57,5 +57,24 @@ class LocalFallback:
         for k in expired:
             del self._pair_cache[k]
 
+    def rebuild(self, rows: list[dict]) -> int:
+        """从DB行重建pair缓存（重启恢复）
+
+        rows: [{case_id, src_ip, dst_ip, last_seen}]
+        窗口过期的pair自然失效（try_route按last_seen判过期），无需特殊处理。
+        """
+        self._pair_cache.clear()
+        for row in rows:
+            if row.get("src_ip") and row.get("dst_ip"):
+                pair_key = f"{row['src_ip']}>{row['dst_ip']}"
+                last_seen = row.get("last_seen")
+                if not isinstance(last_seen, datetime):
+                    try:
+                        last_seen = datetime.fromisoformat(str(last_seen))
+                    except (ValueError, TypeError):
+                        last_seen = datetime.utcnow()
+                self._pair_cache[pair_key] = (row["case_id"], last_seen)
+        return len(self._pair_cache)
+
     def stats(self) -> dict:
         return {"pair_cache_size": len(self._pair_cache)}

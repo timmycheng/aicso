@@ -254,6 +254,8 @@ class Case(BaseModel):
 
     # 元数据
     metadata: dict = Field(default_factory=dict)
+    merged_into: str | None = None   # 合并重定向（P2合并引擎）
+    split_from: str | None = None    # 拆分回链（P2拆分引擎）
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     closed_at: datetime | None = None
