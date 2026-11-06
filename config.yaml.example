@@ -48,6 +48,29 @@ logging:
   level: INFO
   format: json
 
+# 象信AI System One 判定模型（分流引擎，见 docs/REFACTOR_DESIGN.md §5 §10）
+# api_key 从项目根 .env 读取（XX-AI-KEY=sk-xx-...），.env 不入库
+system_one:
+  enabled: true                # false = 纯本地兜底分流（内网无外网形态）
+  base_url: https://api.xiangxinai.cn/v1
+  api_key: ${XX-AI-KEY}
+  model: xiangxin-latest
+  batch_window_ms: 100         # 微批聚合窗口
+  batch_max_alerts: 50         # 单批上限
+  timeout_ms: 2000
+  confidence_threshold: 0.6    # 低于阈值 → 保守新建Case + 人工复核
+  cache_ttl_seconds: 60
+  fallback: local_rules
+  candidate_top_k: 10
+  review_queue_enabled: true
+
+# 路由队列与背压
+routing:
+  queue_max_size: 10000
+  high_water_mark: 0.8
+  overload_mark: 0.95
+  s2_concurrency: 3
+
 # 数据源配置
 datasources:
   # 示例：Kafka消费（内网SIEM常用）
