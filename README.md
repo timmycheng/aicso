@@ -4,7 +4,8 @@
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.11+-green.svg)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/Tests-53%20passed-brightgreen.svg)](#测试)
+[![CI](https://github.com/timmycheng/aicso/actions/workflows/ci.yml/badge.svg)](https://github.com/timmycheng/aicso/actions/workflows/ci.yml)
+[![Tests](https://img.shields.io/badge/Tests-87%20passed-brightgreen.svg)](#测试)
 
 ## 简介
 
@@ -214,6 +215,11 @@ docker compose up -d
 | [PRD](docs/PRD.md) | 产品需求文档：背景、功能规划、竞品分析、路线图 |
 | [技术方案](docs/TECHNICAL_DESIGN.md) | 架构设计、Agent详细设计、接口定义、存储方案 |
 | [白皮书](docs/WHITEPAPER.md) | 产品理念、核心能力、典型场景、部署方案 |
+| [重构设计](docs/REFACTOR_DESIGN.md) | Case-centric流式重构：分流引擎（象信System One）、Case生长模型、生产化骨架 |
+
+## 进行中的重构
+
+Case-centric 流式重构（[Epic #1](https://github.com/timmycheng/aicso/issues/1)）进行中：**Case 将成为安全运营的唯一消费单位**——流式告警经分流引擎（本地候选索引 + [象信AI System One](https://xiangxinai.cn)判定模型）汇入已有或新建的 Case，Case 上下文持续生长为单一真实事件。设计详见[重构设计文档](docs/REFACTOR_DESIGN.md)，当前阶段告警聚合模块（aggregator）正被分流引擎（router）替换。
 
 ## 测试
 
