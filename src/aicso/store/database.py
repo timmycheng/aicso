@@ -137,6 +137,8 @@ class Database:
                 resolution TEXT,
                 tags TEXT DEFAULT '[]',
                 metadata TEXT DEFAULT '{}',
+                merged_into TEXT,
+                split_from TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 closed_at TIMESTAMP,
@@ -159,6 +161,8 @@ class Database:
                 enriched_data TEXT DEFAULT '{}',
                 case_id TEXT REFERENCES cases(case_id),
                 is_false_positive BOOLEAN DEFAULT FALSE,
+                routed_at TIMESTAMP,
+                routing_source TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -211,13 +215,54 @@ class Database:
                 result TEXT DEFAULT '{}'
             );
 
+            CREATE TABLE IF NOT EXISTS routing_decisions (
+                id TEXT PRIMARY KEY,
+                alert_id TEXT NOT NULL,
+                case_id TEXT,
+                decision TEXT NOT NULL,
+                source TEXT NOT NULL,
+                confidence REAL,
+                degraded BOOLEAN DEFAULT 0,
+                latency_ms REAL,
+                candidates INTEGER DEFAULT 0,
+                detail TEXT DEFAULT '{}',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
             CREATE INDEX IF NOT EXISTS idx_alerts_case_id ON alerts(case_id);
             CREATE INDEX IF NOT EXISTS idx_alerts_src_ip ON alerts(src_ip);
             CREATE INDEX IF NOT EXISTS idx_alerts_timestamp ON alerts(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_alerts_routed_at ON alerts(routed_at);
             CREATE INDEX IF NOT EXISTS idx_case_events_case_id ON case_events(case_id);
             CREATE INDEX IF NOT EXISTS idx_cases_status ON cases(status);
             CREATE INDEX IF NOT EXISTS idx_cases_severity ON cases(severity);
+            CREATE INDEX IF NOT EXISTS idx_routing_decisions_alert
+                ON routing_decisions(alert_id);
+            CREATE INDEX IF NOT EXISTS idx_routing_decisions_created
+                ON routing_decisions(created_at);
         """)
+        await self._db.commit()
+        await self._migrate_columns()
+
+    async def _migrate_columns(self) -> None:
+        """存量库列迁移：CREATE TABLE IF NOT EXISTS 不会给旧表加新列"""
+        migrations = {
+            "alerts": ["routed_at TIMESTAMP", "routing_source TEXT"],
+            "cases": ["merged_into TEXT", "split_from TEXT"],
+        }
+        for table, columns in migrations.items():
+            existing = {
+                row["name"]
+                for row in await self.fetch_all(f"PRAGMA table_info({table})")
+            }
+            if not existing:
+                continue  # 表不存在（新建库已在上方建全）
+            for col_def in columns:
+                col_name = col_def.split()[0]
+                if col_name not in existing:
+                    await self._db.execute(
+                        f"ALTER TABLE {table} ADD COLUMN {col_def}"
+                    )
         await self._db.commit()
 
     @property

@@ -1,10 +1,10 @@
 """FastAPI依赖注入"""
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 
 from fastapi import Request
+from structlog import get_logger
 
 from aicso.config import AppConfig, load_config
 from aicso.core.approval import ApprovalEngine
@@ -12,9 +12,14 @@ from aicso.core.context import ContextManager
 from aicso.core.datasource_manager import DataSourceManager
 from aicso.core.event_bus import EventBus
 from aicso.core.orchestrator import Orchestrator
+from aicso.router.engine import RouterEngine
 from aicso.store.alert_store import AlertStore
 from aicso.store.case_store import CaseStore
 from aicso.store.database import Database
+from aicso.store.routing_store import RoutingDecisionStore
+from aicso.systemone.client import SystemOneClient
+
+logger = get_logger()
 
 
 @dataclass
@@ -23,51 +28,22 @@ class AppState:
     db: Database
     case_store: CaseStore
     alert_store: AlertStore
+    routing_store: RoutingDecisionStore
     event_bus: EventBus
     context_manager: ContextManager
     approval_engine: ApprovalEngine
     orchestrator: Orchestrator
+    router: RouterEngine
+    systemone_client: SystemOneClient | None = None
     datasource_manager: DataSourceManager | None = None
 
 
-async def _restore_aggregation_rules(state: AppState) -> None:
-    """从数据库的Case metadata中恢复聚合规则到内存"""
-    from aicso.aggregator.engine import CaseAggregationRule
-
-    cases = await state.case_store.list_cases(limit=1000)
-    restored = 0
-    for case_data in cases:
-        metadata = case_data.get("metadata", "{}")
-        if isinstance(metadata, str):
-            try:
-                metadata = json.loads(metadata)
-            except (json.JSONDecodeError, TypeError):
-                continue
-
-        agg = metadata.get("aggregation_rule", {})
-        if not isinstance(agg, dict):
-            continue
-        if agg.get("source") != "ai_rule":
-            continue
-
-        dimensions = agg.get("dimensions", [])
-        if not dimensions:
-            continue
-
-        case_id = case_data["case_id"]
-        rule = CaseAggregationRule(
-            case_id=case_id,
-            dimensions=dimensions,
-            window_minutes=agg.get("window_minutes", 30),
-            label=agg.get("label", ""),
-            generated_by=agg.get("generated_by", "triage_agent"),
-        )
-        state.orchestrator.aggregator.set_ai_rule(case_id, rule)
-        restored += 1
-
-    if restored:
-        import structlog
-        structlog.get_logger().info("aggregator.rules_restored", count=restored)
+async def _recover_routing(state: AppState) -> None:
+    """重启恢复（§5.6）：从活跃Case重建候选索引 + 回灌未路由告警"""
+    await state.router.rebuild_index_from_db()
+    backfilled = await state.router.backfill_unrouted()
+    if backfilled:
+        await state.router.flush()
 
 
 async def init_app_state(config_path: str = "config.yaml") -> AppState:
@@ -79,33 +55,58 @@ async def init_app_state(config_path: str = "config.yaml") -> AppState:
 
     case_store = CaseStore(db)
     alert_store = AlertStore(db)
+    routing_store = RoutingDecisionStore(db)
     event_bus = EventBus()
     context_manager = ContextManager(case_store, alert_store)
     approval_engine = ApprovalEngine(event_bus)
 
-    from aicso.aggregator.engine import AlertAggregator
-    aggregator = AlertAggregator(auto_cleanup=True)
+    # System One 客户端（enabled=False 或缺 key → None，引擎进入纯本地模式）
+    systemone_client: SystemOneClient | None = None
+    scfg = config.system_one
+    if scfg.enabled and scfg.api_key:
+        systemone_client = SystemOneClient(
+            api_key=scfg.api_key,
+            base_url=scfg.base_url,
+            model=scfg.model,
+            timeout_ms=scfg.timeout_ms,
+        )
+    elif scfg.enabled and not scfg.api_key:
+        logger.warning("systemone.no_api_key_local_mode")
+
+    router_engine = RouterEngine(
+        case_store=case_store,
+        alert_store=alert_store,
+        routing_store=routing_store,
+        system_one_config=scfg,
+        routing_config=config.routing,
+        client=systemone_client,
+    )
 
     orchestrator = Orchestrator(
         case_store, alert_store, context_manager, event_bus, approval_engine,
-        aggregator=aggregator, max_concurrent_triage=3,
+        router=router_engine, max_concurrent_triage=config.routing.s2_concurrency,
         llm_enabled=config.llm.enabled,
     )
+    router_engine.on_new_case = orchestrator.handle_new_case
     orchestrator.start()
+    await router_engine.start()
 
     state = AppState(
         config=config,
         db=db,
         case_store=case_store,
         alert_store=alert_store,
+        routing_store=routing_store,
         event_bus=event_bus,
         context_manager=context_manager,
         approval_engine=approval_engine,
         orchestrator=orchestrator,
+        router=router_engine,
+        systemone_client=systemone_client,
     )
 
-    # 从数据库恢复聚合规则到内存
-    await _restore_aggregation_rules(state)
+    # 恢复路由状态（索引重建 + 未路由告警回灌）
+    await _recover_routing(state)
 
     # 启动数据源管理器（周期拉取告警）
     if config.datasources:
@@ -119,8 +120,10 @@ async def init_app_state(config_path: str = "config.yaml") -> AppState:
 async def close_app_state(state: AppState) -> None:
     if state.datasource_manager:
         await state.datasource_manager.stop()
+    await state.router.stop()
     await state.orchestrator.close()
-    await state.orchestrator.aggregator.stop()
+    if state.systemone_client:
+        await state.systemone_client.aclose()
     await state.db.flush_and_close()
 
 

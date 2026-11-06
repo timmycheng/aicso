@@ -116,15 +116,16 @@ async def _ds_pull(name: str, hours: int, dry_run: bool):
     from datetime import datetime, timedelta
 
     from aicso.adapters.registry import datasource_registry
-    from aicso.aggregator.engine import AlertAggregator
     from aicso.config import load_config
     from aicso.core.approval import ApprovalEngine
     from aicso.core.context import ContextManager
     from aicso.core.event_bus import EventBus
     from aicso.core.orchestrator import Orchestrator
+    from aicso.router.engine import RouterEngine
     from aicso.store.alert_store import AlertStore
     from aicso.store.case_store import CaseStore
     from aicso.store.database import Database
+    from aicso.store.routing_store import RoutingDecisionStore
 
     config = load_config()
     ds_config = config.datasources.get(name)
@@ -179,17 +180,35 @@ async def _ds_pull(name: str, hours: int, dry_run: bool):
             event_bus = EventBus()
             context_manager = ContextManager(case_store, alert_store)
             approval_engine = ApprovalEngine(event_bus)
-            aggregator = AlertAggregator()
+            config = load_config()
 
-            orch = Orchestrator(
-                case_store, alert_store, context_manager, event_bus, approval_engine, aggregator
+            from aicso.systemone.client import SystemOneClient
+            client = None
+            if config.system_one.enabled and config.system_one.api_key:
+                client = SystemOneClient(
+                    api_key=config.system_one.api_key,
+                    base_url=config.system_one.base_url,
+                    model=config.system_one.model,
+                    timeout_ms=config.system_one.timeout_ms,
+                )
+            router_engine = RouterEngine(
+                case_store, alert_store, RoutingDecisionStore(db),
+                config.system_one, config.routing, client=client,
             )
+            orch = Orchestrator(
+                case_store, alert_store, context_manager, event_bus,
+                approval_engine, router=router_engine,
+            )
+            router_engine.on_new_case = orch.handle_new_case
 
             created_cases = 0
             for alert in alerts:
-                case_id = await orch.handle_alert(alert)
-                if case_id:
-                    created_cases += 1
+                await orch.handle_alert(alert)
+            decisions = await router_engine.flush()
+            created_cases = sum(1 for d in decisions if d.decision == "new_case")
+            await router_engine.stop()
+            if client:
+                await client.aclose()
 
             console.print(
                 f"[green]Done![/] Processed {len(alerts)} alerts, {created_cases} cases affected"
