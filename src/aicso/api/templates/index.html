@@ -1,59 +1,79 @@
 {% extends "base.html" %}
-{% block title %}AiCSO - 仪表盘{% endblock %}
+{% from "_macros.html" import stat_card, sev_badge, status_badge, empty_state %}
+{% block title %}仪表盘 - AiCSO{% endblock %}
+{% block page_title %}仪表盘{% endblock %}
+{% block page_desc %}安全运营总体态势{% endblock %}
+
 {% block content %}
-<div class="header">
-    <h1>仪表盘</h1>
+{% set open_count = cases | selectattr('status', 'in', ['new', 'assigned', 'investigating', 'responding']) | list | length %}
+<div class="stats-grid">
+    {{ stat_card("Case 总数", total_cases, "累计创建", accent="info") }}
+    {{ stat_card("未关闭 Case", open_count, "待处置中", accent="medium") }}
+    {{ stat_card("告警总数", total_alerts, "已接入", accent="success") }}
+    {{ stat_card("Critical/High", (severity_counts.critical or 0) + (severity_counts.high or 0), "高危告警", accent="critical") }}
 </div>
 
-<div class="stats">
-    <div class="stat-card">
-        <div class="label">活跃Case</div>
-        <div class="value">{{ total_cases }}</div>
+<div class="chart-row">
+    <div class="card">
+        <div class="card-title">Case 严重度分布 <span class="hint">全量 Case</span></div>
+        <div class="chart-box">
+            <canvas id="severity-chart"></canvas>
+        </div>
+        <script type="application/json" id="severity-data">{{ severity_counts | tojson }}</script>
     </div>
-    <div class="stat-card">
-        <div class="label">总告警数</div>
-        <div class="value">{{ total_alerts }}</div>
-    </div>
-    <div class="stat-card">
-        <div class="label">严重告警</div>
-        <div class="value">{{ severity_counts.get('critical', 0) + severity_counts.get('high', 0) }}</div>
-    </div>
-    <div class="stat-card">
-        <div class="label">Agent状态</div>
-        <div class="value" style="font-size:1em;color:#27ae60;">就绪</div>
+    <div class="card">
+        <div class="card-title">最近 Case <span class="hint"><a href="/cases">查看全部 →</a></span></div>
+        {% if cases %}
+        <div class="table-wrap">
+            <table class="data">
+                <thead>
+                    <tr><th>Case ID</th><th>标题</th><th>严重度</th><th>状态</th><th>创建时间</th></tr>
+                </thead>
+                <tbody>
+                    {% for c in cases %}
+                    <tr>
+                        <td><a href="/cases/{{ c.case_id }}" class="mono">{{ c.case_id }}</a></td>
+                        <td>{{ c.title[:40] }}</td>
+                        <td>{{ sev_badge(c.severity) }}</td>
+                        <td>{{ status_badge(c.status) }}</td>
+                        <td class="muted" data-reltime="{{ c.created_at }}">{{ (c.created_at|string)[:19] }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        {{ empty_state("还没有 Case", "通过 Mock 注入或数据源接入告警后自动创建") }}
+        {% endif %}
     </div>
 </div>
 
-<div class="card">
-    <h2>最近Case</h2>
-    {% if cases %}
-    <table>
-        <thead>
-            <tr>
-                <th>Case ID</th>
-                <th>标题</th>
-                <th>严重级别</th>
-                <th>状态</th>
-                <th>负责人</th>
-                <th>创建时间</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for c in cases %}
-            <tr>
-                <td><a href="/cases/{{ c.case_id }}">{{ c.case_id }}</a></td>
-                <td>{{ c.title[:50] if c.title else '' }}</td>
-                <td><span class="badge badge-{{ c.severity }}">{{ c.severity }}</span></td>
-                <td><span class="badge badge-{{ c.status }}">{{ c.status }}</span></td>
-                <td>{{ c.assignee_id or '-' }}</td>
-                <td>{{ (c.created_at|string)[:19] if c.created_at else '-' }}</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-    <p style="margin-top:12px;"><a href="/cases">查看全部 &rarr;</a></p>
-    {% else %}
-    <p style="color:#999;">暂无Case数据</p>
-    {% endif %}
-</div>
+<script src="/static/vendor/chart.umd.min.js"></script>
+<script>
+(function () {
+    const el = document.getElementById("severity-data");
+    if (!el) return;
+    const counts = JSON.parse(el.textContent);
+    const order = ["critical", "high", "medium", "low", "info"];
+    const labels = {critical: "Critical", high: "High", medium: "Medium", low: "Low", info: "Info"};
+    const colors = ["#dc2626", "#ea580c", "#d97706", "#16a34a", "#64748b"];
+    const data = order.map(k => counts[k] || 0);
+    new Chart(document.getElementById("severity-chart"), {
+        type: "doughnut",
+        data: {
+            labels: order.map(k => labels[k]),
+            datasets: [{data: data, backgroundColor: colors, borderWidth: 2,
+                        borderColor: "#ffffff", hoverOffset: 6}],
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            cutout: "62%",
+            plugins: {
+                legend: {position: "right", labels: {boxWidth: 10, boxHeight: 10,
+                          usePointStyle: true, font: {size: 12}}},
+            },
+        },
+    });
+})();
+</script>
 {% endblock %}

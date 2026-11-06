@@ -56,6 +56,8 @@ class OpsService:
             },
         )
         await self.case_store.add_event(case_id, event)
+        # 交互频次操作：flush写缓冲保证读己之写（时间线/上下文立即可见）
+        await self.case_store.db.flush()
         logger.info("ops.recorded", case_id=case_id, action=record.action,
                     actor=record.actor, actor_type=record.actor_type)
         return record

@@ -43,10 +43,7 @@ async def index(request: Request):
     total_cases = await state.case_store.count()
     total_alerts = await state.alert_store.count()
 
-    severity_counts = {}
-    for c in cases:
-        sev = c.get("severity", "unknown")
-        severity_counts[sev] = severity_counts.get(sev, 0) + 1
+    severity_counts = await state.case_store.count_by_severity()
 
     return templates.TemplateResponse(
         request,

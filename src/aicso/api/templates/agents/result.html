@@ -1,18 +1,30 @@
 {% extends "base.html" %}
 {% block title %}{{ action }}结果 - AiCSO{% endblock %}
-{% block content %}
-<div class="header">
-    <h1>{{ action }}结果: {{ case_id }}</h1>
-    <a href="/agents" class="btn btn-sm">返回Agent</a>
-</div>
+{% block page_title %}{{ action }}结果{% endblock %}
+{% block page_desc %}<span class="mono">{{ case_id }}</span>{% endblock %}
 
+{% block topbar_actions %}
+<a href="/agents" class="btn sm">返回 Agent</a>
+<a href="/cases/{{ case_id }}" class="btn primary sm">查看 Case</a>
+{% endblock %}
+
+{% block content %}
 <div class="card">
     {% if result is string %}
-    <div style="white-space:pre-wrap;font-size:0.95em;line-height:1.6;">{{ result }}</div>
+    <div style="white-space:pre-wrap;font-size:13.5px;line-height:1.7;">{{ result }}</div>
     {% elif result is mapping %}
-    <pre style="background:#f8f9fa;padding:16px;border-radius:4px;overflow-x:auto;font-size:0.85em;">{{ result | tojson(indent=2) }}</pre>
+    {% for section, content in result.items() %}
+    <div style="margin-bottom:18px;">
+        <div class="card-title">{{ section }}</div>
+        {% if content is mapping or content is iterable and content is not string %}
+        <pre class="mono" style="background:#f8fafc;border:1px solid var(--c-border);border-radius:var(--radius-sm);padding:14px;overflow-x:auto;font-size:12px;white-space:pre-wrap;">{{ content | tojson(indent=2) }}</pre>
+        {% else %}
+        <div style="font-size:13.5px;">{{ content }}</div>
+        {% endif %}
+    </div>
+    {% endfor %}
     {% else %}
-    <p style="color:#999;">无结果</p>
+    <span class="muted">无结果</span>
     {% endif %}
 </div>
 {% endblock %}

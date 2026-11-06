@@ -99,6 +99,13 @@ class CaseStore:
                 (split_from, datetime.utcnow().isoformat(), case_id),
             )
 
+    async def count_by_severity(self) -> dict:
+        """全量Case严重度分布（仪表盘图表用）"""
+        rows = await self.db.fetch_all(
+            "SELECT severity, COUNT(*) AS cnt FROM cases GROUP BY severity"
+        )
+        return {r["severity"]: r["cnt"] for r in rows}
+
     async def add_event(self, case_id: str, event: CaseEvent) -> None:
         await self.db.buffered_execute(
             """INSERT INTO case_events (event_id, case_id, timestamp, event_type, actor, detail)

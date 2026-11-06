@@ -59,7 +59,10 @@
                 <div class="page-title">{% block page_title %}{% endblock %}</div>
                 <div class="page-desc">{% block page_desc %}{% endblock %}</div>
             </div>
-            <div class="topbar-right" id="sys-chips"></div>
+            <div class="topbar-right">
+                {% block topbar_actions %}{% endblock %}
+                <div id="sys-chips"></div>
+            </div>
         </header>
         <main class="content">
             {% block content %}{% endblock %}

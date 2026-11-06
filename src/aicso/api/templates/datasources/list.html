@@ -1,59 +1,37 @@
 {% extends "base.html" %}
+{% from "_macros.html" import empty_state %}
 {% block title %}数据源 - AiCSO{% endblock %}
+{% block page_title %}数据源{% endblock %}
+{% block page_desc %}已配置的告警接入源（config.yaml datasources）{% endblock %}
+
 {% block content %}
-<div class="header">
-    <h1>数据源管理</h1>
-</div>
-
 <div class="card">
-    <h2>已配置数据源</h2>
     {% if datasources %}
-    <table>
-        <thead>
-            <tr>
-                <th>名称</th>
-                <th>类型</th>
-                <th>描述</th>
-                <th>状态</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for ds in datasources %}
-            <tr>
-                <td style="font-weight:600;color:#16213e;">{{ ds.name }}</td>
-                <td>{{ ds.type }}</td>
-                <td>{{ ds.description or '-' }}</td>
-                <td>
-                    {% if ds.enabled %}
-                    <span class="badge badge-resolved">已启用</span>
-                    {% else %}
-                    <span class="badge badge-closed">已禁用</span>
-                    {% endif %}
-                </td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+    <div class="table-wrap">
+        <table class="data">
+            <thead>
+                <tr><th>名称</th><th>类型</th><th>描述</th><th>状态</th></tr>
+            </thead>
+            <tbody>
+                {% for ds in datasources %}
+                <tr>
+                    <td class="mono">{{ ds.name }}</td>
+                    <td><span class="badge outline">{{ ds.type }}</span></td>
+                    <td>{{ ds.description or '—' }}</td>
+                    <td>
+                        {% if ds.enabled %}
+                        <span class="badge low"><span class="dot"></span>启用</span>
+                        {% else %}
+                        <span class="badge outline">停用</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
     {% else %}
-    <p style="color:#999;">暂未配置数据源。请编辑 <code>config.yaml</code> 添加数据源。</p>
+    {{ empty_state("未配置数据源", "在 config.yaml 的 datasources 段配置 Kafka / REST API / Syslog / JSON 文件源") }}
     {% endif %}
-</div>
-
-<div class="card">
-    <h2>支持的数据源类型</h2>
-    <table>
-        <thead>
-            <tr>
-                <th>类型</th>
-                <th>说明</th>
-            </tr>
-        </thead>
-        <tbody>
-            <tr><td style="font-weight:600;">rest_api</td><td>通用REST API适配（SIEM、态势感知平台）</td></tr>
-            <tr><td style="font-weight:600;">kafka</td><td>Kafka Topic告警消费（内网SIEM常用）</td></tr>
-            <tr><td style="font-weight:600;">syslog</td><td>Syslog日志文件监听</td></tr>
-            <tr><td style="font-weight:600;">json_file</td><td>JSON文件批量导入</td></tr>
-        </tbody>
-    </table>
 </div>
 {% endblock %}

@@ -1,55 +1,49 @@
 {% extends "base.html" %}
+{% from "_macros.html" import sev_badge, icon %}
 {% block title %}{{ alert.alert_id }} - AiCSO{% endblock %}
-{% block content %}
-<div class="header">
-    <h1>告警详情</h1>
-    <a href="/alerts" class="btn btn-sm">返回列表</a>
-</div>
+{% block page_title %}告警详情{% endblock %}
+{% block page_desc %}<span class="mono">{{ alert.alert_id }}</span>{% endblock %}
 
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
-    <div class="card">
-        <h2>基本信息</h2>
-        <div class="detail-grid">
-            <div class="label">Alert ID</div>
-            <div class="value">{{ alert.alert_id }}</div>
-            <div class="label">来源</div>
-            <div class="value">{{ alert.source or '-' }}</div>
-            <div class="label">规则ID</div>
-            <div class="value">{{ alert.rule_id or '-' }}</div>
-            <div class="label">规则名称</div>
-            <div class="value">{{ alert.rule_name or '-' }}</div>
-            <div class="label">严重级别</div>
-            <div class="value"><span class="badge badge-{{ alert.severity }}">{{ alert.severity }}</span></div>
-            <div class="label">时间</div>
-            <div class="value">{{ (alert.timestamp|string)[:19] if alert.timestamp else '-' }}</div>
-            <div class="label">Case ID</div>
-            <div class="value">{% if alert.case_id %}<a href="/cases/{{ alert.case_id }}">{{ alert.case_id }}</a>{% else %}-{% endif %}</div>
-            <div class="label">误报标记</div>
-            <div class="value">{{ '是' if alert.is_false_positive else '否' }}</div>
-        </div>
-    </div>
-
-    <div class="card">
-        <h2>网络信息</h2>
-        <div class="detail-grid">
-            <div class="label">源IP</div>
-            <div class="value">{{ alert.src_ip or '-' }}</div>
-            <div class="label">目标IP</div>
-            <div class="value">{{ alert.dst_ip or '-' }}</div>
-            <div class="label">源端口</div>
-            <div class="value">{{ alert.src_port or '-' }}</div>
-            <div class="label">目标端口</div>
-            <div class="value">{{ alert.dst_port or '-' }}</div>
-            <div class="label">协议</div>
-            <div class="value">{{ alert.protocol or '-' }}</div>
-        </div>
-    </div>
-</div>
-
-{% if alert.raw_log %}
-<div class="card">
-    <h2>原始日志</h2>
-    <pre style="background:#f8f9fa;padding:12px;border-radius:4px;overflow-x:auto;font-size:0.85em;white-space:pre-wrap;">{{ alert.raw_log[:2000] }}</pre>
-</div>
+{% block topbar_actions %}
+<a href="/alerts" class="btn sm">{{ icon("alert") }} 返回列表</a>
+{% if alert.case_id %}
+<a href="/cases/{{ alert.case_id }}" class="btn primary sm">查看所属 Case</a>
 {% endif %}
+{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-title">告警信息</div>
+    <div class="kv-grid">
+        <div class="kv"><div class="k">规则</div><div class="v">{{ alert.rule_name or '—' }}</div></div>
+        <div class="kv"><div class="k">规则 ID</div><div class="v mono">{{ alert.rule_id or '—' }}</div></div>
+        <div class="kv"><div class="k">严重度</div><div class="v">{{ sev_badge(alert.severity) }}</div></div>
+        <div class="kv"><div class="k">来源</div><div class="v">{{ alert.source }}</div></div>
+        <div class="kv"><div class="k">源 IP</div><div class="v mono">{{ alert.src_ip or '—' }}</div></div>
+        <div class="kv"><div class="k">目标 IP</div><div class="v mono">{{ alert.dst_ip or '—' }}</div></div>
+        <div class="kv"><div class="k">源端口</div><div class="v mono">{{ alert.src_port or '—' }}</div></div>
+        <div class="kv"><div class="k">目标端口</div><div class="v mono">{{ alert.dst_port or '—' }}</div></div>
+        <div class="kv"><div class="k">协议</div><div class="v">{{ alert.protocol or '—' }}</div></div>
+        <div class="kv"><div class="k">时间</div><div class="v" data-reltime="{{ alert.timestamp }}">{{ (alert.timestamp|string)[:19] }}</div></div>
+        <div class="kv"><div class="k">路由状态</div>
+            <div class="v">
+                {% if alert.routed_at %}<span class="badge low"><span class="dot"></span>已路由 · {{ alert.routing_source or '' }}</span>
+                {% elif alert.case_id %}<span class="badge info"><span class="dot"></span>历史关联</span>
+                {% else %}<span class="badge medium"><span class="dot"></span>待路由</span>{% endif %}
+            </div>
+        </div>
+        <div class="kv"><div class="k">归属 Case</div>
+            <div class="v">{% if alert.case_id %}<a href="/cases/{{ alert.case_id }}" class="mono">{{ alert.case_id }}</a>{% else %}—{% endif %}</div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-title">原始日志</div>
+    {% if alert.raw_log %}
+    <pre class="mono" style="background:#f8fafc;border:1px solid var(--c-border);border-radius:var(--radius-sm);padding:14px;overflow-x:auto;font-size:12px;white-space:pre-wrap;">{{ alert.raw_log }}</pre>
+    {% else %}
+    <span class="muted">无原始日志</span>
+    {% endif %}
+</div>
 {% endblock %}

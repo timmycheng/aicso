@@ -1,28 +1,33 @@
 {% extends "base.html" %}
-{% block title %}新建Case - AiCSO{% endblock %}
-{% block content %}
-<div class="header">
-    <h1>新建Case</h1>
-</div>
+{% block title %}新建 Case - AiCSO{% endblock %}
+{% block page_title %}新建 Case{% endblock %}
+{% block page_desc %}手动创建安全运营事件{% endblock %}
 
-<div class="card" style="max-width:600px;">
+{% block content %}
+<div class="card" style="max-width:640px;">
     <form method="post" action="/cases/new">
-        <div class="form-group">
-            <label for="title">标题</label>
-            <input type="text" id="title" name="title" required placeholder="输入Case标题">
+        <div class="form-grid">
+            <div class="field full">
+                <label>标题 <span style="color:var(--c-danger)">*</span></label>
+                <input type="text" name="title" required placeholder="例如：疑似SSH暴力破解攻击"
+                       maxlength="120">
+            </div>
+            <div class="field">
+                <label>严重级别</label>
+                <select name="severity">
+                    <option value="critical">Critical - 危急</option>
+                    <option value="high">High - 高</option>
+                    <option value="medium" selected>Medium - 中</option>
+                    <option value="low">Low - 低</option>
+                    <option value="info">Info - 信息</option>
+                </select>
+                <div class="help">决定优先级与SLA时限</div>
+            </div>
         </div>
-        <div class="form-group">
-            <label for="severity">严重级别</label>
-            <select id="severity" name="severity">
-                <option value="info">Info</option>
-                <option value="low">Low</option>
-                <option value="medium" selected>Medium</option>
-                <option value="high">High</option>
-                <option value="critical">Critical</option>
-            </select>
+        <div style="margin-top:20px;display:flex;gap:10px;">
+            <button type="submit" class="btn primary">创建 Case</button>
+            <a href="/cases" class="btn">取消</a>
         </div>
-        <button type="submit" class="btn btn-primary">创建</button>
-        <a href="/cases" class="btn" style="margin-left:8px;">取消</a>
     </form>
 </div>
 {% endblock %}

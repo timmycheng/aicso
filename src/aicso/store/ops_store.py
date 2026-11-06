@@ -14,7 +14,8 @@ class OpsRecordStore:
         self.db = db
 
     async def create(self, record: OpsRecord) -> None:
-        await self.db.buffered_execute(
+        # 直写commit：用户频次操作，保证POST后立即可读（读己之写）
+        await self.db.execute(
             """INSERT INTO ops_records (id, case_id, actor, actor_type,
                action, params, result, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
@@ -26,6 +27,7 @@ class OpsRecordStore:
                 record.created_at.isoformat(),
             ),
         )
+        await self.db.commit()
 
     async def list_by_case(self, case_id: str, limit: int = 100) -> list[dict]:
         return await self.db.fetch_all(
