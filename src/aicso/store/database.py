@@ -221,6 +221,17 @@ class Database:
                 result TEXT DEFAULT '{}'
             );
 
+            CREATE TABLE IF NOT EXISTS ops_records (
+                id TEXT PRIMARY KEY,
+                case_id TEXT NOT NULL REFERENCES cases(case_id),
+                actor TEXT NOT NULL,
+                actor_type TEXT NOT NULL DEFAULT 'human',
+                action TEXT NOT NULL,
+                params TEXT DEFAULT '{}',
+                result TEXT DEFAULT '{}',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
             CREATE TABLE IF NOT EXISTS routing_decisions (
                 id TEXT PRIMARY KEY,
                 alert_id TEXT NOT NULL,
@@ -246,6 +257,7 @@ class Database:
                 ON routing_decisions(alert_id);
             CREATE INDEX IF NOT EXISTS idx_routing_decisions_created
                 ON routing_decisions(created_at);
+            CREATE INDEX IF NOT EXISTS idx_ops_records_case ON ops_records(case_id);
         """)
         await self._db.commit()
         await self._migrate_columns()

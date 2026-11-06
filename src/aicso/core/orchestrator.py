@@ -44,6 +44,7 @@ class Orchestrator:
         approval_engine: ApprovalEngine,
         router: RouterEngine | None = None,
         dispatcher: S2Dispatcher | None = None,
+        ops_service=None,
         max_concurrent_triage: int = 3,
         llm_enabled: bool = True,
     ):
@@ -54,6 +55,7 @@ class Orchestrator:
         self.approval_engine = approval_engine
         self.router = router
         self.dispatcher = dispatcher
+        self.ops_service = ops_service
         self._agents: dict[str, BaseAgent] = {}
         self._llm_enabled = llm_enabled
 
@@ -310,24 +312,42 @@ class Orchestrator:
         context = await self.context_manager.build_context(case_id)
         ctx_dict = context.to_dict()
 
-        investigation_agent = self.get_agent("investigation")
-        intel_agent = self.get_agent("intel")
+        # 防御式解析：LLM关闭等场景下Agent可能未注册，跳过并告警而非整体失败
+        tasks = []
+        for agent_name, task_type, timeout in (
+            ("investigation", "deep_investigation", 60),
+            ("intel", "ioc_lookup", 30),
+        ):
+            if agent_name in self._agents:
+                tasks.append(self._run_agent_safe(
+                    self._agents[agent_name],
+                    task={"type": task_type, "case_id": case_id},
+                    context=ctx_dict, timeout=timeout,
+                ))
+            else:
+                logger.warning("orchestrator.agent_not_registered_skip",
+                               agent=agent_name, case_id=case_id)
+        if not tasks:
+            await self._record_needs_review(
+                case_id, "调查未执行：investigation/intel Agent均未注册（LLM未启用？）"
+            )
+            return {}
 
-        results = await asyncio.gather(
-            self._run_agent_safe(investigation_agent,
-                                 task={"type": "deep_investigation", "case_id": case_id},
-                                 context=ctx_dict, timeout=60),
-            self._run_agent_safe(intel_agent,
-                                 task={"type": "ioc_lookup", "case_id": case_id},
-                                 context=ctx_dict, timeout=30),
-            return_exceptions=True,
-        )
+        results = await asyncio.gather(*tasks, return_exceptions=True)
 
         combined = {}
         for r in results:
             if isinstance(r, AgentResult) and r.status == AgentStatus.COMPLETED:
                 combined.update(r.output)
 
+        # 统一操作记录（设计§7：Agent调查也是Case上的操作）
+        if self.ops_service:
+            await self.ops_service.record_op(
+                case_id, actor="investigation+intel", actor_type="agent",
+                action="investigate", params={"agents": ["investigation", "intel"]},
+                result={"sections": list(combined.keys())},
+                summary="Agent调查完成",
+            )
         return combined
 
     async def generate_report(self, case_id: str) -> str:
@@ -345,7 +365,15 @@ class Orchestrator:
         )
 
         if result and result.status == AgentStatus.COMPLETED:
-            return result.output.get("report", "报告生成失败")
+            report = result.output.get("report", "报告生成失败")
+            if self.ops_service:
+                await self.ops_service.record_op(
+                    case_id, actor="report", actor_type="agent",
+                    action="generate_report",
+                    result={"length": len(report)},
+                    summary="事件报告生成完成",
+                )
+            return report
         return "报告生成失败"
 
     async def _run_agent_safe(
