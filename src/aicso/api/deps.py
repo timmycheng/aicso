@@ -14,6 +14,7 @@ from aicso.core.datasource_manager import DataSourceManager
 from aicso.core.event_bus import EventBus
 from aicso.core.ops import OpsService
 from aicso.core.orchestrator import Orchestrator
+from aicso.core.retention import RetentionService
 from aicso.router.engine import RouterEngine
 from aicso.router.merge import MergeSplitEngine
 from aicso.store.alert_store import AlertStore
@@ -34,6 +35,7 @@ class AppState:
     alert_store: AlertStore
     routing_store: RoutingDecisionStore
     ops_service: OpsService
+    retention_service: RetentionService
     event_bus: EventBus
     context_manager: ContextManager
     approval_engine: ApprovalEngine
@@ -54,10 +56,12 @@ async def _recover_routing(state: AppState) -> None:
 
 async def init_app_state(config_path: str = "config.yaml") -> AppState:
     config = load_config(config_path)
-    db = Database()
+    db = Database(profile=config.database.profile)
     await db.connect()
     await db.init_tables()
     db.enable_write_buffer(batch_size=50, flush_interval=0.1)
+
+    retention_service = RetentionService(db, config.retention)
 
     case_store = CaseStore(db)
     alert_store = AlertStore(db)
@@ -123,11 +127,15 @@ async def init_app_state(config_path: str = "config.yaml") -> AppState:
         router=router_engine,
         merge_engine=merge_engine,
         ops_service=ops_service,
+        retention_service=retention_service,
         systemone_client=systemone_client,
     )
 
     # 恢复路由状态（索引重建 + 未路由告警回灌）
     await _recover_routing(state)
+
+    # 告警保留策略周期清理
+    retention_service.start()
 
     # 启动数据源管理器（周期拉取告警）
     if config.datasources:
@@ -141,6 +149,7 @@ async def init_app_state(config_path: str = "config.yaml") -> AppState:
 async def close_app_state(state: AppState) -> None:
     if state.datasource_manager:
         await state.datasource_manager.stop()
+    await state.retention_service.stop()
     await state.router.stop()
     await state.orchestrator.close()
     if state.systemone_client:

@@ -33,6 +33,13 @@ llm:
 
 database:
   url: sqlite+aiosqlite:///./aicso.db
+  profile: sqlite               # 存储profile缝：postgres等见 docs/REFACTOR_DESIGN.md §12
+
+# 告警保留策略（容量治理，0天=不清理）
+retention:
+  alert_days: 0
+  cleanup_interval_minutes: 60
+  scope: closed_cases           # orphan_only | closed_cases | all
 
 vector_store:
   provider: chromadb

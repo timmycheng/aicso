@@ -38,6 +38,17 @@ class LLMConfig(BaseModel):
 
 class DatabaseConfig(BaseModel):
     url: str = "sqlite+aiosqlite:///./aicso.db"
+    # 存储profile缝（设计§12）：默认sqlite（内网单机）；
+    # postgres等后续profile接入时替换实现，配置先行
+    profile: str = "sqlite"
+
+
+class RetentionConfig(BaseModel):
+    """告警保留策略（设计§12容量治理）：0天=不清理"""
+    alert_days: int = 0
+    cleanup_interval_minutes: int = 60
+    # 清理范围: orphan_only(仅未关联Case) | closed_cases(含已关闭Case的) | all
+    scope: str = "closed_cases"
 
 
 class VectorStoreConfig(BaseModel):
@@ -98,6 +109,7 @@ class AppConfig(BaseModel):
     datasources: dict[str, DataSourceConfig] = Field(default_factory=dict)
     system_one: SystemOneConfig = Field(default_factory=SystemOneConfig)
     routing: RoutingConfig = Field(default_factory=RoutingConfig)
+    retention: RetentionConfig = Field(default_factory=RetentionConfig)
 
 
 def load_dotenv(path: str = ".env") -> dict[str, str]:
