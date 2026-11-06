@@ -1,17 +1,19 @@
-"""Mock数据注入测试 - 验证event_id唯一性修复"""
+"""Mock数据注入测试 - 验证分流语义与event_id唯一性"""
 
 import pytest
 
 from aicso.adapters.mock_producer import ecs_to_alert, generate_mock_alerts
-from aicso.aggregator.engine import AlertAggregator
+from aicso.config import RoutingConfig, SystemOneConfig
 from aicso.core.approval import ApprovalEngine
 from aicso.core.context import ContextManager
 from aicso.core.event_bus import EventBus
 from aicso.core.orchestrator import Orchestrator
 from aicso.models.case import Case, CaseSeverity, CaseStatus
+from aicso.router.engine import RouterEngine
 from aicso.store.alert_store import AlertStore
 from aicso.store.case_store import CaseStore
 from aicso.store.database import Database
+from aicso.store.routing_store import RoutingDecisionStore
 
 
 @pytest.fixture
@@ -31,12 +33,20 @@ async def setup(db):
     event_bus = EventBus()
     context_manager = ContextManager(case_store, alert_store)
     approval_engine = ApprovalEngine(event_bus)
-    aggregator = AlertAggregator()
 
+    router_engine = RouterEngine(
+        case_store=case_store,
+        alert_store=alert_store,
+        routing_store=RoutingDecisionStore(db),
+        system_one_config=SystemOneConfig(enabled=True),
+        routing_config=RoutingConfig(),
+        client=None,  # 纯本地兜底分流
+    )
     orch = Orchestrator(
         case_store, alert_store, context_manager, event_bus, approval_engine,
-        aggregator=aggregator, llm_enabled=False,
+        router=router_engine, llm_enabled=False,
     )
+    router_engine.on_new_case = orch.handle_new_case
     orch.start()
 
     yield {
@@ -44,8 +54,10 @@ async def setup(db):
         "case_store": case_store,
         "alert_store": alert_store,
         "orch": orch,
+        "router": router_engine,
     }
 
+    await router_engine.stop()
     await orch.close()
     await db.close()
 
@@ -89,19 +101,20 @@ async def test_event_id_unique_across_cases(setup):
 
 @pytest.mark.asyncio
 async def test_mock_inject_no_errors(setup):
-    """验证Mock数据注入不会报错"""
+    """验证Mock数据注入不会报错（submit→flush分流语义）"""
     orch = setup["orch"]
+    router = setup["router"]
 
     ecs_alerts = generate_mock_alerts(count=10)
-    cases = set()
-
     for ecs in ecs_alerts:
-        alert = ecs_to_alert(ecs)
-        case_id = await orch.handle_alert(alert)
-        assert case_id is not None
-        cases.add(case_id)
+        await orch.handle_alert(ecs_to_alert(ecs))
 
-    assert len(cases) > 0
+    decisions = await router.flush()
+    assert len(decisions) == 10
+    case_ids = {d.case_id for d in decisions}
+    # 10条随机mock告警应收敛到少于10个Case（存在同源告警汇入）
+    assert len(case_ids) > 0
+    assert len(case_ids) <= 10
 
 
 @pytest.mark.asyncio
@@ -109,16 +122,16 @@ async def test_mock_inject_events_persisted(setup):
     """验证Mock注入后事件正确持久化"""
     orch = setup["orch"]
     case_store = setup["case_store"]
+    router = setup["router"]
 
     ecs_alerts = generate_mock_alerts(count=3)
-    case_ids = []
-
     for ecs in ecs_alerts:
-        alert = ecs_to_alert(ecs)
-        case_id = await orch.handle_alert(alert)
-        case_ids.append(case_id)
+        await orch.handle_alert(ecs_to_alert(ecs))
 
-    for cid in case_ids:
+    decisions = await router.flush()
+    assert len(decisions) == 3
+
+    for cid in {d.case_id for d in decisions}:
         events = await case_store.get_events(cid)
         assert len(events) >= 2
         event_ids = [e["event_id"] for e in events]

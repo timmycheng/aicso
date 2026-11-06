@@ -68,12 +68,13 @@ async def mock_generate(
                 llm_provider=state.config.llm.default_provider,
             ))
 
+        before = state.router.metrics.cases_created_total
         for ecs in ecs_alerts:
-            alert = ecs_to_alert(ecs)
-            case_id = await orch.handle_alert(alert)
+            await orch.handle_alert(ecs_to_alert(ecs))
             injected += 1
-            if case_id:
-                cases_created += 1
+        # 同步排空路由队列，保证返回时结果确定
+        await state.router.flush()
+        cases_created = state.router.metrics.cases_created_total - before
 
     preview_alerts = []
     for ecs in ecs_alerts[:5]:
@@ -132,12 +133,13 @@ async def api_mock_generate(
                 llm_provider=state.config.llm.default_provider,
             ))
 
+        before = state.router.metrics.cases_created_total
         for ecs in ecs_alerts:
-            alert = ecs_to_alert(ecs)
-            case_id = await orch.handle_alert(alert)
+            await orch.handle_alert(ecs_to_alert(ecs))
             injected += 1
-            if case_id:
-                cases_created += 1
+        # 同步排空路由队列，保证返回时结果确定
+        await state.router.flush()
+        cases_created = state.router.metrics.cases_created_total - before
 
     return {
         "generated": len(ecs_alerts),

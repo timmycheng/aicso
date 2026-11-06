@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 
 from aicso.models.alert import Alert
 from aicso.store.database import Database
@@ -38,6 +39,22 @@ class AlertStore:
         await self.db.buffered_execute(
             "UPDATE alerts SET case_id = ? WHERE alert_id = ?",
             (case_id, alert_id),
+        )
+
+    async def mark_routed(self, alert_id: str, case_id: str, source: str) -> None:
+        """路由完成后更新：case关联 + 路由时间 + 决策来源"""
+        await self.db.buffered_execute(
+            "UPDATE alerts SET case_id = ?, routed_at = ?, routing_source = ? WHERE alert_id = ?",
+            (case_id, datetime.utcnow().isoformat(), source, alert_id),
+        )
+
+    async def list_unrouted(self, limit: int = 10000) -> list[dict]:
+        """未路由告警（重启回灌用，§5.6）"""
+        return await self.db.fetch_all(
+            """SELECT * FROM alerts
+               WHERE routed_at IS NULL AND case_id IS NULL
+               ORDER BY created_at ASC LIMIT ?""",
+            (limit,),
         )
 
     async def list_alerts(
