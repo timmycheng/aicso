@@ -1,13 +1,11 @@
 """数据源适配器注册中心"""
 from __future__ import annotations
 
-from typing import Type
-
 import structlog
 
-from aicso.adapters.base import DataSourceAdapter, SyslogAdapter, JSONFileAdapter
-from aicso.adapters.rest_api import RestApiAdapter
+from aicso.adapters.base import DataSourceAdapter, JSONFileAdapter, SyslogAdapter
 from aicso.adapters.kafka import KafkaAdapter
+from aicso.adapters.rest_api import RestApiAdapter
 
 logger = structlog.get_logger()
 
@@ -16,18 +14,18 @@ class AdapterRegistry:
     """数据源适配器注册中心"""
 
     def __init__(self):
-        self._adapters: dict[str, Type[DataSourceAdapter]] = {}
+        self._adapters: dict[str, type[DataSourceAdapter]] = {}
         # 注册内置适配器
         self.register(SyslogAdapter)
         self.register(JSONFileAdapter)
         self.register(RestApiAdapter)
         self.register(KafkaAdapter)
 
-    def register(self, adapter_class: Type[DataSourceAdapter]) -> None:
+    def register(self, adapter_class: type[DataSourceAdapter]) -> None:
         """注册适配器"""
         self._adapters[adapter_class.name] = adapter_class
 
-    def get(self, adapter_type: str) -> Type[DataSourceAdapter] | None:
+    def get(self, adapter_type: str) -> type[DataSourceAdapter] | None:
         """获取适配器类"""
         return self._adapters.get(adapter_type)
 

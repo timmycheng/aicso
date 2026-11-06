@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import re
 
-from aicso.agents.base import BaseAgent, AgentResult
+from aicso.agents.base import AgentResult, BaseAgent
 
 VALID_DIMENSIONS = {
     "src_ip+dst_ip", "src_ip+rule_id", "src_ip",
@@ -153,10 +153,13 @@ aggregation_rule.dimensions 从以下值中选择（可多选）：
             dimensions = ai_rule.get("dimensions", [])
             if not isinstance(dimensions, list):
                 dimensions = []
-            validated_dims = _validate_dimensions(dimensions, category_hint or result.get("category", ""))
+            validated_dims = _validate_dimensions(
+                dimensions, category_hint or result.get("category", "")
+            )
+            raw_window = ai_rule.get("window_minutes")
             result["aggregation_rule"] = {
                 "dimensions": validated_dims,
-                "window_minutes": ai_rule.get("window_minutes", 30) if isinstance(ai_rule.get("window_minutes"), int) else 30,
+                "window_minutes": raw_window if isinstance(raw_window, int) else 30,
                 "label": ai_rule.get("label", "") if isinstance(ai_rule.get("label"), str) else "",
             }
             if not result["aggregation_rule"]["label"]:

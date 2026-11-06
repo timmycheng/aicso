@@ -2,10 +2,8 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
-from typing import Optional
 
-from aicso.models.case import Case, CaseEvent, CaseSeverity, CaseStatus
+from aicso.models.case import Case, CaseEvent
 from aicso.store.database import Database
 
 
@@ -33,7 +31,7 @@ class CaseStore:
         )
         await self.db.commit()
 
-    async def get(self, case_id: str) -> Optional[dict]:
+    async def get(self, case_id: str) -> dict | None:
         return await self.db.fetch_one(
             "SELECT * FROM cases WHERE case_id = ?", (case_id,)
         )
@@ -59,9 +57,9 @@ class CaseStore:
 
     async def list_cases(
         self,
-        status: Optional[str] = None,
-        severity: Optional[str] = None,
-        assignee: Optional[str] = None,
+        status: str | None = None,
+        severity: str | None = None,
+        assignee: str | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> list[dict]:
@@ -96,7 +94,7 @@ class CaseStore:
             (case_id,),
         )
 
-    async def count(self, status: Optional[str] = None) -> int:
+    async def count(self, status: str | None = None) -> int:
         sql = "SELECT COUNT(*) as cnt FROM cases"
         params: list = []
         if status:

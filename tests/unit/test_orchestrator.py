@@ -2,16 +2,16 @@
 import pytest
 import pytest_asyncio
 
-from aicso.agents.base import BaseAgent, AgentResult
-from aicso.core.orchestrator import Orchestrator
-from aicso.core.event_bus import EventBus
-from aicso.core.context import ContextManager
-from aicso.core.approval import ApprovalEngine
+from aicso.agents.base import AgentResult, BaseAgent
 from aicso.aggregator.engine import AlertAggregator
-from aicso.store.database import Database
-from aicso.store.case_store import CaseStore
-from aicso.store.alert_store import AlertStore
+from aicso.core.approval import ApprovalEngine
+from aicso.core.context import ContextManager
+from aicso.core.event_bus import EventBus
+from aicso.core.orchestrator import Orchestrator
 from aicso.models.alert import Alert
+from aicso.store.alert_store import AlertStore
+from aicso.store.case_store import CaseStore
+from aicso.store.database import Database
 
 
 class MockTriageAgent(BaseAgent):
@@ -52,7 +52,9 @@ async def orchestrator():
     approval_engine = ApprovalEngine(event_bus)
     aggregator = AlertAggregator()
 
-    orch = Orchestrator(case_store, alert_store, context_manager, event_bus, approval_engine, aggregator)
+    orch = Orchestrator(
+        case_store, alert_store, context_manager, event_bus, approval_engine, aggregator
+    )
     orch.register_agent(MockTriageAgent())
     orch.register_agent(MockAgent())
 
@@ -162,7 +164,9 @@ class TestOrchestrator:
 
         case = await orchestrator.case_store.get(case_id)
         import json
-        metadata = json.loads(case["metadata"]) if isinstance(case["metadata"], str) else case["metadata"]
+        metadata = (
+            json.loads(case["metadata"]) if isinstance(case["metadata"], str) else case["metadata"]
+        )
         rule = metadata.get("aggregation_rule", {})
         assert rule["source"] == "immediate"
         assert "src_ip+dst_ip" in rule["dimensions"]

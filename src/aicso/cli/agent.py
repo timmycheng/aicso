@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Optional
 
 import typer
 from rich.console import Console
@@ -23,7 +22,8 @@ def agent_status():
 
     agents = [
         ("triage", "告警分诊Agent", "idle", "search_alerts, search_cases, query_asset"),
-        ("investigation", "事件调查Agent", "idle", "search_alerts, query_asset, lookup_threat_intel"),
+        ("investigation", "事件调查Agent", "idle",
+         "search_alerts, query_asset, lookup_threat_intel"),
         ("intel", "威胁情报Agent", "idle", "lookup_threat_intel, search_ioc"),
         ("response", "响应执行Agent", "idle", "execute_response_action"),
         ("report", "报告生成Agent", "idle", "-"),
@@ -40,17 +40,17 @@ def agent_investigate(case_id: str = typer.Argument(help="Case ID")):
 
 
 async def _agent_investigate(case_id: str):
-    from aicso.config import load_config
-    from aicso.store.database import Database
-    from aicso.store.case_store import CaseStore
-    from aicso.store.alert_store import AlertStore
-    from aicso.store.vector_store import VectorStore
-    from aicso.core.event_bus import EventBus
-    from aicso.core.context import ContextManager
-    from aicso.core.approval import ApprovalEngine
-    from aicso.core.orchestrator import Orchestrator
-    from aicso.agents.investigation import InvestigationAgent
     from aicso.agents.intel import IntelAgent
+    from aicso.agents.investigation import InvestigationAgent
+    from aicso.config import load_config
+    from aicso.core.approval import ApprovalEngine
+    from aicso.core.context import ContextManager
+    from aicso.core.event_bus import EventBus
+    from aicso.core.orchestrator import Orchestrator
+    from aicso.store.alert_store import AlertStore
+    from aicso.store.case_store import CaseStore
+    from aicso.store.database import Database
+    from aicso.store.vector_store import VectorStore
 
     config = load_config()
 
@@ -74,7 +74,9 @@ async def _agent_investigate(case_id: str):
         context_manager = ContextManager(case_store, alert_store, vs)
         approval_engine = ApprovalEngine(event_bus)
 
-        orchestrator = Orchestrator(case_store, alert_store, context_manager, event_bus, approval_engine)
+        orchestrator = Orchestrator(
+            case_store, alert_store, context_manager, event_bus, approval_engine
+        )
         orchestrator.register_agent(InvestigationAgent(llm_provider=config.llm.default_provider))
         orchestrator.register_agent(IntelAgent(llm_provider=config.llm.default_provider))
 
@@ -99,20 +101,20 @@ def agent_report(case_id: str = typer.Argument(help="Case ID")):
 
 
 async def _agent_report(case_id: str):
-    from aicso.config import load_config
-    from aicso.store.database import Database
-    from aicso.store.case_store import CaseStore
-    from aicso.store.alert_store import AlertStore
-    from aicso.store.vector_store import VectorStore
-    from aicso.core.event_bus import EventBus
-    from aicso.core.context import ContextManager
-    from aicso.core.approval import ApprovalEngine
-    from aicso.core.orchestrator import Orchestrator
-    from aicso.agents.triage import TriageAgent
-    from aicso.agents.investigation import InvestigationAgent
     from aicso.agents.intel import IntelAgent
-    from aicso.agents.response import ResponseAgent
+    from aicso.agents.investigation import InvestigationAgent
     from aicso.agents.report import ReportAgent
+    from aicso.agents.response import ResponseAgent
+    from aicso.agents.triage import TriageAgent
+    from aicso.config import load_config
+    from aicso.core.approval import ApprovalEngine
+    from aicso.core.context import ContextManager
+    from aicso.core.event_bus import EventBus
+    from aicso.core.orchestrator import Orchestrator
+    from aicso.store.alert_store import AlertStore
+    from aicso.store.case_store import CaseStore
+    from aicso.store.database import Database
+    from aicso.store.vector_store import VectorStore
 
     config = load_config()
 
@@ -136,7 +138,9 @@ async def _agent_report(case_id: str):
         context_manager = ContextManager(case_store, alert_store, vs)
         approval_engine = ApprovalEngine(event_bus)
 
-        orchestrator = Orchestrator(case_store, alert_store, context_manager, event_bus, approval_engine)
+        orchestrator = Orchestrator(
+            case_store, alert_store, context_manager, event_bus, approval_engine
+        )
         for agent_cls in [TriageAgent, InvestigationAgent, IntelAgent, ResponseAgent, ReportAgent]:
             orchestrator.register_agent(agent_cls(llm_provider=config.llm.default_provider))
 

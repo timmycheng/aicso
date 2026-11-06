@@ -1,9 +1,12 @@
 """TriageAgent 测试"""
 import json
+
 import pytest
 
 from aicso.agents.triage import (
-    _extract_json, _validate_dimensions, VALID_DIMENSIONS,
+    VALID_DIMENSIONS,
+    _extract_json,
+    _validate_dimensions,
 )
 
 

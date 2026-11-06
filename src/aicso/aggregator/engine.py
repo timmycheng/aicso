@@ -4,7 +4,6 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Optional
 
 import structlog
 
@@ -40,7 +39,7 @@ IMMEDIATE_WINDOW_MINUTES = 10
 IMMEDIATE_LABEL = "同源IP+同目标IP(即时,10min)"
 
 
-def _build_key(alert: Alert, dimension: str) -> Optional[str]:
+def _build_key(alert: Alert, dimension: str) -> str | None:
     """根据维度描述构建聚合Key"""
     if dimension == "src_ip":
         return alert.src_ip
@@ -113,7 +112,7 @@ class AlertAggregator:
             except Exception:
                 logger.error("aggregator.auto_cleanup_failed", exc_info=True)
 
-    async def try_aggregate(self, alert: Alert) -> Optional[AggregationMatch]:
+    async def try_aggregate(self, alert: Alert) -> AggregationMatch | None:
         """两阶段聚合：AI规则优先，即时规则兜底"""
         now = datetime.utcnow()
 
@@ -200,7 +199,7 @@ class AlertAggregator:
             label=rule.label,
         )
 
-    def get_ai_rule(self, case_id: str) -> Optional[CaseAggregationRule]:
+    def get_ai_rule(self, case_id: str) -> CaseAggregationRule | None:
         """获取Case的AI规则"""
         return self._ai_rules.get(case_id)
 

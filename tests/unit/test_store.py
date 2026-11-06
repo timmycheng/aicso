@@ -1,13 +1,13 @@
 """存储层测试"""
+
 import pytest
 import pytest_asyncio
-from datetime import datetime
 
-from aicso.store.database import Database
-from aicso.store.case_store import CaseStore
-from aicso.store.alert_store import AlertStore
-from aicso.models.case import Case, CaseStatus, CaseSeverity, CasePriority, CaseEvent
 from aicso.models.alert import Alert
+from aicso.models.case import Case, CaseEvent, CaseSeverity, CaseStatus
+from aicso.store.alert_store import AlertStore
+from aicso.store.case_store import CaseStore
+from aicso.store.database import Database
 
 
 @pytest_asyncio.fixture
@@ -77,14 +77,14 @@ class TestCaseStore:
         await case_store.create(case)
         event = CaseEvent(
             event_id="EVT-001",
-            event_type="status_change",
+            event_type="status_changed",
             actor="user",
             detail={"from": "new", "to": "assigned"},
         )
         await case_store.add_event("CSO-001", event)
         events = await case_store.get_events("CSO-001")
         assert len(events) == 1
-        assert events[0]["event_type"] == "status_change"
+        assert events[0]["event_type"] == "status_changed"
 
     @pytest.mark.asyncio
     async def test_count(self, case_store):
@@ -97,7 +97,9 @@ class TestCaseStore:
 class TestAlertStore:
     @pytest.mark.asyncio
     async def test_create_and_get(self, alert_store):
-        alert = Alert(alert_id="A-001", source="suricata", rule_name="SQL Injection", severity="high")
+        alert = Alert(
+            alert_id="A-001", source="suricata", rule_name="SQL Injection", severity="high"
+        )
         await alert_store.create(alert)
         result = await alert_store.get("A-001")
         assert result is not None

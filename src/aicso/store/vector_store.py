@@ -1,8 +1,6 @@
 """向量存储层 - 基于ChromaDB"""
 from __future__ import annotations
 
-from typing import Optional
-
 import structlog
 
 logger = structlog.get_logger()
@@ -35,7 +33,7 @@ class VectorStore:
         self,
         doc_id: str,
         text: str,
-        metadata: Optional[dict] = None,
+        metadata: dict | None = None,
     ) -> None:
         if not self._collection:
             return

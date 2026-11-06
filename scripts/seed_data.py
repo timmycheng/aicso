@@ -7,11 +7,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from aicso.store.database import Database
-from aicso.store.case_store import CaseStore
-from aicso.store.alert_store import AlertStore
-from aicso.models.case import Case, CaseSeverity, CaseStatus
 from aicso.models.alert import Alert
+from aicso.models.case import Case, CaseSeverity, CaseStatus
+from aicso.store.alert_store import AlertStore
+from aicso.store.case_store import CaseStore
+from aicso.store.database import Database
 
 
 async def seed(db_path: str = "aicso.db"):

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 import yaml
 
@@ -18,7 +17,7 @@ class PlaybookParser:
         path = Path(file_path)
         if not path.exists():
             raise FileNotFoundError(f"Playbook file not found: {file_path}")
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             data = yaml.safe_load(f)
         return PlaybookParser.parse_dict(data)
 

@@ -2,10 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
-from datetime import datetime
-from pathlib import Path
-from typing import Any
 
 import aiosqlite
 import structlog
@@ -45,7 +41,7 @@ class WriteBuffer:
             self._flush_event.set()
             try:
                 await asyncio.wait_for(self._task, timeout=5.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 self._task.cancel()
             self._task = None
         await self.flush()
@@ -80,7 +76,7 @@ class WriteBuffer:
                 await asyncio.wait_for(
                     self._flush_event.wait(), timeout=self._flush_interval
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
             try:
                 await self.flush()

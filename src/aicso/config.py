@@ -3,15 +3,14 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Optional
 
 import yaml
 from pydantic import BaseModel, Field
 
 
 class LLMProviderConfig(BaseModel):
-    api_key: Optional[str] = None
-    base_url: Optional[str] = None
+    api_key: str | None = None
+    base_url: str | None = None
     model: str = "deepseek-chat"
     max_tokens: int = 4096
     temperature: float = 0.1
@@ -91,7 +90,7 @@ def load_config(config_path: str = "config.yaml") -> AppConfig:
     """加载配置文件"""
     path = Path(config_path)
     if path.exists():
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             raw = yaml.safe_load(f) or {}
         raw = _resolve_env_vars(raw)
         # Ensure dict fields are not None

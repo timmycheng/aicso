@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Optional
 
 import typer
 from rich.console import Console
@@ -68,8 +67,8 @@ def ds_test(name: str = typer.Argument(help="数据源名称（config.yaml中的
 
 
 async def _ds_test(name: str):
-    from aicso.config import load_config
     from aicso.adapters.registry import datasource_registry
+    from aicso.config import load_config
 
     config = load_config()
     ds_config = config.datasources.get(name)
@@ -115,16 +114,17 @@ def ds_pull(
 
 async def _ds_pull(name: str, hours: int, dry_run: bool):
     from datetime import datetime, timedelta
-    from aicso.config import load_config
+
     from aicso.adapters.registry import datasource_registry
-    from aicso.store.database import Database
-    from aicso.store.alert_store import AlertStore
-    from aicso.core.orchestrator import Orchestrator
-    from aicso.core.event_bus import EventBus
-    from aicso.core.context import ContextManager
-    from aicso.core.approval import ApprovalEngine
     from aicso.aggregator.engine import AlertAggregator
+    from aicso.config import load_config
+    from aicso.core.approval import ApprovalEngine
+    from aicso.core.context import ContextManager
+    from aicso.core.event_bus import EventBus
+    from aicso.core.orchestrator import Orchestrator
+    from aicso.store.alert_store import AlertStore
     from aicso.store.case_store import CaseStore
+    from aicso.store.database import Database
 
     config = load_config()
     ds_config = config.datasources.get(name)
@@ -181,7 +181,9 @@ async def _ds_pull(name: str, hours: int, dry_run: bool):
             approval_engine = ApprovalEngine(event_bus)
             aggregator = AlertAggregator()
 
-            orch = Orchestrator(case_store, alert_store, context_manager, event_bus, approval_engine, aggregator)
+            orch = Orchestrator(
+                case_store, alert_store, context_manager, event_bus, approval_engine, aggregator
+            )
 
             created_cases = 0
             for alert in alerts:
@@ -189,7 +191,9 @@ async def _ds_pull(name: str, hours: int, dry_run: bool):
                 if case_id:
                     created_cases += 1
 
-            console.print(f"[green]Done![/] Processed {len(alerts)} alerts, {created_cases} cases affected")
+            console.print(
+                f"[green]Done![/] Processed {len(alerts)} alerts, {created_cases} cases affected"
+            )
         finally:
             await db.close()
     finally:

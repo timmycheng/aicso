@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta
-from typing import Optional
 
 import structlog
 
@@ -23,11 +22,11 @@ class DataSourceHandle:
         self.ds_config = ds_config
         self.adapter = adapter
         self.connected: bool = False
-        self.last_poll: Optional[datetime] = None
-        self.last_error: Optional[str] = None
+        self.last_poll: datetime | None = None
+        self.last_error: str | None = None
         self.total_fetched: int = 0
         self.poll_count: int = 0
-        self.task: Optional[asyncio.Task] = None
+        self.task: asyncio.Task | None = None
 
     def status_dict(self) -> dict:
         return {
@@ -91,7 +90,9 @@ class DataSourceManager:
                     interval=ds_config.poll_interval,
                 )
             else:
-                logger.info("datasource_manager.no_poll", name=name, poll_interval=ds_config.poll_interval)
+                logger.info(
+                    "datasource_manager.no_poll", name=name, poll_interval=ds_config.poll_interval
+                )
 
     async def stop(self) -> None:
         """停止所有轮询任务并关闭连接"""
@@ -133,7 +134,9 @@ class DataSourceManager:
                             logger.info("datasource_manager.reconnected", name=name)
                     except Exception as e:
                         handle.last_error = str(e)
-                        logger.warning("datasource_manager.reconnect_failed", name=name, error=str(e))
+                        logger.warning(
+                            "datasource_manager.reconnect_failed", name=name, error=str(e)
+                        )
 
                 if handle.connected:
                     alerts = await handle.adapter.poll(since)
@@ -171,7 +174,7 @@ class DataSourceManager:
 
             await asyncio.sleep(interval)
 
-    def get_handle(self, name: str) -> Optional[DataSourceHandle]:
+    def get_handle(self, name: str) -> DataSourceHandle | None:
         return self._handles.get(name)
 
     def list_status(self) -> list[dict]:

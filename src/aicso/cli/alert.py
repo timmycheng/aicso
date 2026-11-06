@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Optional
 
 import typer
 from rich.console import Console
@@ -14,17 +13,17 @@ console = Console()
 
 @alert_app.command("list")
 def alert_list(
-    case_id: Optional[str] = typer.Option(None, help="按Case ID筛选"),
-    source: Optional[str] = typer.Option(None, help="按来源筛选"),
+    case_id: str | None = typer.Option(None, help="按Case ID筛选"),
+    source: str | None = typer.Option(None, help="按来源筛选"),
     limit: int = typer.Option(20, help="显示数量"),
 ):
     """列出告警"""
     asyncio.run(_alert_list(case_id, source, limit))
 
 
-async def _alert_list(case_id: Optional[str], source: Optional[str], limit: int):
-    from aicso.store.database import Database
+async def _alert_list(case_id: str | None, source: str | None, limit: int):
     from aicso.store.alert_store import AlertStore
+    from aicso.store.database import Database
 
     db = Database()
     await db.connect()
@@ -73,8 +72,8 @@ def alert_show(alert_id: str = typer.Argument(help="Alert ID")):
 
 
 async def _alert_show(alert_id: str):
-    from aicso.store.database import Database
     from aicso.store.alert_store import AlertStore
+    from aicso.store.database import Database
 
     db = Database()
     await db.connect()
@@ -101,7 +100,7 @@ async def _alert_show(alert_id: str):
 
         raw_log = alert.get("raw_log")
         if raw_log:
-            console.print(f"\n[bold]原始日志:[/]")
+            console.print("\n[bold]原始日志:[/]")
             console.print(f"  {raw_log[:500]}")
     finally:
         await db.close()
@@ -109,7 +108,7 @@ async def _alert_show(alert_id: str):
 
 @alert_app.command("search")
 def alert_search(
-    src_ip: Optional[str] = typer.Option(None, help="按源IP搜索"),
+    src_ip: str | None = typer.Option(None, help="按源IP搜索"),
     days: int = typer.Option(7, help="搜索天数"),
     limit: int = typer.Option(20, help="显示数量"),
 ):

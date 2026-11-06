@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Optional
 
 import typer
 from rich.console import Console
@@ -22,9 +21,9 @@ def case_create(
 
 
 async def _case_create(title: str, severity: str):
-    from aicso.store.database import Database
+    from aicso.models.case import SEVERITY_PRIORITY_MAP, Case, CaseSeverity, CaseStatus
     from aicso.store.case_store import CaseStore
-    from aicso.models.case import Case, CaseSeverity, CaseStatus, SEVERITY_PRIORITY_MAP
+    from aicso.store.database import Database
 
     db = Database()
     await db.connect()
@@ -54,17 +53,17 @@ async def _case_create(title: str, severity: str):
 
 @case_app.command("list")
 def case_list(
-    status: Optional[str] = typer.Option(None, help="按状态筛选"),
-    severity: Optional[str] = typer.Option(None, help="按严重级别筛选"),
+    status: str | None = typer.Option(None, help="按状态筛选"),
+    severity: str | None = typer.Option(None, help="按严重级别筛选"),
     limit: int = typer.Option(20, help="显示数量"),
 ):
     """列出Case"""
     asyncio.run(_case_list(status, severity, limit))
 
 
-async def _case_list(status: Optional[str], severity: Optional[str], limit: int):
-    from aicso.store.database import Database
+async def _case_list(status: str | None, severity: str | None, limit: int):
     from aicso.store.case_store import CaseStore
+    from aicso.store.database import Database
 
     db = Database()
     await db.connect()
@@ -109,9 +108,9 @@ def case_show(case_id: str = typer.Argument(help="Case ID")):
 
 
 async def _case_show(case_id: str):
-    from aicso.store.database import Database
-    from aicso.store.case_store import CaseStore
     from aicso.store.alert_store import AlertStore
+    from aicso.store.case_store import CaseStore
+    from aicso.store.database import Database
 
     db = Database()
     await db.connect()
@@ -156,18 +155,20 @@ async def _case_show(case_id: str):
 @case_app.command("update")
 def case_update(
     case_id: str = typer.Argument(help="Case ID"),
-    status: Optional[str] = typer.Option(None, help="新状态"),
-    assignee: Optional[str] = typer.Option(None, help="负责人"),
-    resolution: Optional[str] = typer.Option(None, help="处置结果"),
+    status: str | None = typer.Option(None, help="新状态"),
+    assignee: str | None = typer.Option(None, help="负责人"),
+    resolution: str | None = typer.Option(None, help="处置结果"),
 ):
     """更新Case"""
     asyncio.run(_case_update(case_id, status, assignee, resolution))
 
 
-async def _case_update(case_id: str, status: Optional[str], assignee: Optional[str], resolution: Optional[str]):
-    from aicso.store.database import Database
-    from aicso.store.case_store import CaseStore
+async def _case_update(
+    case_id: str, status: str | None, assignee: str | None, resolution: str | None
+):
     from aicso.models.case import CaseStatus
+    from aicso.store.case_store import CaseStore
+    from aicso.store.database import Database
 
     db = Database()
     await db.connect()
@@ -178,7 +179,7 @@ async def _case_update(case_id: str, status: Optional[str], assignee: Optional[s
             console.print(f"[red]Case不存在: {case_id}[/]")
             return
 
-        from aicso.models.case import Case, CaseSeverity, CasePriority
+        from aicso.models.case import Case, CasePriority, CaseSeverity
         case = Case(
             case_id=case_data["case_id"],
             title=case_data["title"],
@@ -208,7 +209,7 @@ async def _case_update(case_id: str, status: Optional[str], assignee: Optional[s
 
         if resolution:
             case.resolution = resolution
-            console.print(f"[green]OK[/] Resolution updated")
+            console.print("[green]OK[/] Resolution updated")
 
         await store.update(case)
     finally:

@@ -71,6 +71,8 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
+# UP042(str,Enum→StrEnum)会改变str()语义，待统一迁移后再启用
+ignore = ["UP042"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

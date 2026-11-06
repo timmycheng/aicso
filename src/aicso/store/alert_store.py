@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
-from typing import Optional
 
 from aicso.models.alert import Alert
 from aicso.store.database import Database
@@ -31,7 +29,7 @@ class AlertStore:
             ),
         )
 
-    async def get(self, alert_id: str) -> Optional[dict]:
+    async def get(self, alert_id: str) -> dict | None:
         return await self.db.fetch_one(
             "SELECT * FROM alerts WHERE alert_id = ?", (alert_id,)
         )
@@ -44,9 +42,9 @@ class AlertStore:
 
     async def list_alerts(
         self,
-        case_id: Optional[str] = None,
-        source: Optional[str] = None,
-        src_ip: Optional[str] = None,
+        case_id: str | None = None,
+        source: str | None = None,
+        src_ip: str | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[dict]:
@@ -65,7 +63,7 @@ class AlertStore:
         params.extend([limit, offset])
         return await self.db.fetch_all(sql, tuple(params))
 
-    async def count(self, case_id: Optional[str] = None) -> int:
+    async def count(self, case_id: str | None = None) -> int:
         if case_id:
             row = await self.db.fetch_one(
                 "SELECT COUNT(*) as cnt FROM alerts WHERE case_id = ?", (case_id,)

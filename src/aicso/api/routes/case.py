@@ -12,8 +12,14 @@ from fastapi.templating import Jinja2Templates
 
 from aicso.api.deps import AppState, get_state
 from aicso.models.case import (
-    SEVERITY_PRIORITY_MAP, Case, CaseEvent, CasePriority, CaseSeverity, CaseStatus,
-    EVENT_TYPE_LABELS, EVENT_TYPE_ICONS, EVENT_TYPE_COLORS,
+    EVENT_TYPE_COLORS,
+    EVENT_TYPE_ICONS,
+    EVENT_TYPE_LABELS,
+    SEVERITY_PRIORITY_MAP,
+    Case,
+    CasePriority,
+    CaseSeverity,
+    CaseStatus,
 )
 
 _TEMPLATES_DIR = str(Path(__file__).resolve().parent.parent / "templates")

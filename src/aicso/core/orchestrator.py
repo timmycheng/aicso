@@ -3,21 +3,32 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta
-from typing import Optional
 
 import structlog
+from ulid import ULID
 
-from aicso.agents.base import BaseAgent, AgentResult, AgentStatus
+from aicso.agents.base import AgentResult, AgentStatus, BaseAgent
 from aicso.aggregator.engine import (
-    AlertAggregator, CaseAggregationRule, IMMEDIATE_DIMENSION, _build_key,
+    IMMEDIATE_DIMENSION,
+    AlertAggregator,
+    CaseAggregationRule,
+    _build_key,
 )
 from aicso.core.approval import ApprovalEngine
 from aicso.core.context import ContextManager
-from aicso.core.event_bus import EventBus, Event, EventType
+from aicso.core.event_bus import Event, EventBus, EventType
 from aicso.models.alert import Alert
-from aicso.models.case import Case, CaseEvent, CasePriority, CaseSeverity, CaseStatus, SEVERITY_PRIORITY_MAP, SLA_CONFIG
-from aicso.store.case_store import CaseStore
+from aicso.models.case import (
+    SEVERITY_PRIORITY_MAP,
+    SLA_CONFIG,
+    Case,
+    CaseEvent,
+    CasePriority,
+    CaseSeverity,
+    CaseStatus,
+)
 from aicso.store.alert_store import AlertStore
+from aicso.store.case_store import CaseStore
 
 logger = structlog.get_logger()
 
@@ -32,7 +43,7 @@ class Orchestrator:
         context_manager: ContextManager,
         event_bus: EventBus,
         approval_engine: ApprovalEngine,
-        aggregator: Optional[AlertAggregator] = None,
+        aggregator: AlertAggregator | None = None,
         max_concurrent_triage: int = 3,
         llm_enabled: bool = True,
     ):
@@ -95,7 +106,7 @@ class Orchestrator:
             raise ValueError(f"Agent not found: {name}")
         return agent
 
-    async def handle_alert(self, alert: Alert) -> Optional[str]:
+    async def handle_alert(self, alert: Alert) -> str | None:
         """两阶段告警处理
 
         阶段1: 告警进入 → 存储 → 尝试聚合（AI规则 → 即时规则）
@@ -214,7 +225,7 @@ class Orchestrator:
                         }
                         if case_data:
                             rule_event = CaseEvent(
-                                event_id=f"evt-ai-rule-{case_id}",
+                                event_id=f"{case_id}-evt-{str(ULID())}",
                                 event_type="ai_rule_generated",
                                 actor="triage_agent",
                                 detail=rule_info,
@@ -405,7 +416,7 @@ class Orchestrator:
                     correlation_id=task.get("case_id", ""),
                 ))
                 return result
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning("orchestrator.agent_timeout", agent=agent.name, attempt=attempt)
                 if attempt == max_retries:
                     return AgentResult.failure(f"Agent {agent.name} timed out after {timeout}s")

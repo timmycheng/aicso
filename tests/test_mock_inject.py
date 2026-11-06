@@ -1,5 +1,4 @@
 """Mock数据注入测试 - 验证event_id唯一性修复"""
-import asyncio
 
 import pytest
 
@@ -9,7 +8,7 @@ from aicso.core.approval import ApprovalEngine
 from aicso.core.context import ContextManager
 from aicso.core.event_bus import EventBus
 from aicso.core.orchestrator import Orchestrator
-from aicso.models.case import Case, CaseEvent, CaseSeverity, CaseStatus
+from aicso.models.case import Case, CaseSeverity, CaseStatus
 from aicso.store.alert_store import AlertStore
 from aicso.store.case_store import CaseStore
 from aicso.store.database import Database

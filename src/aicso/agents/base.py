@@ -4,7 +4,6 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
 
 import structlog
 
@@ -86,12 +85,15 @@ class BaseAgent(ABC):
         """调用LLM"""
         try:
             from litellm import acompletion
+
             from aicso.config import load_config
 
             config = load_config()
             provider_cfg = config.llm.providers.get(self.llm_provider, {})
 
-            model_name = self.llm_model or provider_cfg.model if hasattr(provider_cfg, 'model') else self.llm_model or "deepseek-chat"
+            # 优先级：实例覆盖 > provider配置 > 默认值（原写法因运算符优先级使配置失效）
+            provider_model = getattr(provider_cfg, "model", None)
+            model_name = self.llm_model or provider_model or "deepseek-chat"
 
             kwargs = {
                 "model": model_name,

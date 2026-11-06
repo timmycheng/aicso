@@ -7,9 +7,9 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
-from aicso.cli.case import case_app
-from aicso.cli.alert import alert_app
 from aicso.cli.agent import agent_app
+from aicso.cli.alert import alert_app
+from aicso.cli.case import case_app
 from aicso.cli.datasource import ds_app
 
 app = typer.Typer(

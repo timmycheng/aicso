@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Optional
 
 from pydantic import BaseModel, Field
+from ulid import ULID
 
 from aicso.models.alert import Alert
 from aicso.models.asset import Asset
@@ -240,11 +240,11 @@ class Case(BaseModel):
     severity: CaseSeverity = CaseSeverity.MEDIUM
     status: CaseStatus = CaseStatus.NEW
     priority: CasePriority = CasePriority.P3
-    assignee_id: Optional[str] = None
+    assignee_id: str | None = None
     tags: list[str] = Field(default_factory=list)
-    ai_summary: Optional[str] = None
-    ai_recommendation: Optional[str] = None
-    resolution: Optional[str] = None
+    ai_summary: str | None = None
+    ai_recommendation: str | None = None
+    resolution: str | None = None
 
     # 关联实体
     alerts: list[Alert] = Field(default_factory=list)
@@ -256,13 +256,15 @@ class Case(BaseModel):
     metadata: dict = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
-    closed_at: Optional[datetime] = None
-    sla_deadline: Optional[datetime] = None
+    closed_at: datetime | None = None
+    sla_deadline: datetime | None = None
 
     def _create_event(self, event_type: str, actor: str, detail: dict) -> CaseEvent:
         """创建事件的内部方法"""
         event = CaseEvent(
-            event_id=f"{self.case_id}-evt-{len(self.timeline) + 1:06d}",
+            # ULID保证全局唯一：Case实例可能从DB行重建（timeline为空），
+            # 按timeline长度生成序号会与已持久化事件冲突
+            event_id=f"{self.case_id}-evt-{str(ULID())}",
             event_type=event_type,
             actor=actor,
             detail=detail,
@@ -379,7 +381,9 @@ class Case(BaseModel):
         )
         return event
 
-    def record_ai_triage(self, summary: str, recommendation: str, agent_name: str = "triage") -> CaseEvent:
+    def record_ai_triage(
+        self, summary: str, recommendation: str, agent_name: str = "triage"
+    ) -> CaseEvent:
         """记录AI分诊结果"""
         self.ai_summary = summary
         self.ai_recommendation = recommendation
@@ -429,7 +433,9 @@ class Case(BaseModel):
         )
         return event
 
-    def record_action_executed(self, action_type: str, target: str, result: str, actor: str) -> CaseEvent:
+    def record_action_executed(
+        self, action_type: str, target: str, result: str, actor: str
+    ) -> CaseEvent:
         """记录响应动作执行"""
         event = self._create_event(
             CaseEventType.ACTION_EXECUTED, actor,

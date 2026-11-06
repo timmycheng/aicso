@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -17,14 +16,14 @@ class AssetCriticality(str, Enum):
 class Asset(BaseModel):
     """Asset（资产）- 企业IT资产"""
     asset_id: str
-    hostname: Optional[str] = None
-    ip_address: Optional[str] = None
-    mac_address: Optional[str] = None
-    os: Optional[str] = None
-    owner: Optional[str] = None
-    department: Optional[str] = None
+    hostname: str | None = None
+    ip_address: str | None = None
+    mac_address: str | None = None
+    os: str | None = None
+    owner: str | None = None
+    department: str | None = None
     criticality: AssetCriticality = AssetCriticality.MEDIUM
     tags: list[str] = Field(default_factory=list)
     metadata: dict = Field(default_factory=dict)
-    first_seen: Optional[datetime] = None
-    last_seen: Optional[datetime] = None
+    first_seen: datetime | None = None
+    last_seen: datetime | None = None
