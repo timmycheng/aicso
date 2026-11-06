@@ -1,214 +1,147 @@
 {% extends "base.html" %}
+{% from "_macros.html" import sev_badge, status_badge, empty_state, icon, stat_card %}
 {% block title %}{{ case.case_id }} - AiCSO{% endblock %}
+{% block page_title %}{{ case.title }}{% endblock %}
+{% block page_desc %}<span class="mono">{{ case.case_id }}</span>{% endblock %}
+
+{% block topbar_actions %}
+<a href="/cases" class="btn sm">{{ icon("case") }} 返回列表</a>
+{% endblock %}
+
 {% block content %}
-<div class="header">
-    <h1>{{ case.case_id }}</h1>
-    <div>
-        <a href="/cases" class="btn btn-sm">返回列表</a>
-    </div>
+{% if case.merged_into %}
+<div class="banner warn">此 Case 已合并至
+    <a href="/cases/{{ case.merged_into }}"><span class="mono">{{ case.merged_into }}</span></a>，
+    以下内容为合并前的历史记录。</div>
+{% endif %}
+
+{% if case.split_from %}
+<div class="banner info">此 Case 由
+    <a href="/cases/{{ case.split_from }}"><span class="mono">{{ case.split_from }}</span></a>
+    拆分产生。</div>
+{% endif %}
+
+<div class="stats-grid">
+    {{ stat_card("严重度", case.severity | upper, accent=case.severity) }}
+    {{ stat_card("优先级", "P" ~ case.priority, accent="info") }}
+    {{ stat_card("关联告警", alerts | length, accent="success") }}
+    {{ stat_card("时间线事件", events | length, accent="info") }}
 </div>
 
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+<div style="display:grid;grid-template-columns:1.2fr 1fr;gap:20px;">
     <div class="card">
-        <h2>基本信息</h2>
-        <div class="detail-grid">
-            <div class="label">标题</div>
-            <div class="value">{{ case.title }}</div>
-            <div class="label">严重级别</div>
-            <div class="value"><span class="badge badge-{{ case.severity }}">{{ case.severity }}</span></div>
-            <div class="label">状态</div>
-            <div class="value"><span class="badge badge-{{ case.status }}">{{ case.status }}</span></div>
-            <div class="label">优先级</div>
-            <div class="value">P{{ case.priority }}</div>
-            <div class="label">负责人</div>
-            <div class="value">{{ case.assignee_id or '-' }}</div>
-            <div class="label">SLA截止</div>
-            <div class="value">{{ (case.sla_deadline|string)[:19] if case.sla_deadline else '-' }}</div>
-            <div class="label">创建时间</div>
-            <div class="value">{{ (case.created_at|string)[:19] if case.created_at else '-' }}</div>
-            <div class="label">处置结果</div>
-            <div class="value">{{ case.resolution or '-' }}</div>
+        <div class="card-title">基本信息</div>
+        <div class="kv-grid">
+            <div class="kv"><div class="k">状态</div><div class="v">{{ status_badge(case.status) }}</div></div>
+            <div class="kv"><div class="k">严重度</div><div class="v">{{ sev_badge(case.severity) }}</div></div>
+            <div class="kv"><div class="k">负责人</div><div class="v">{{ case.assignee_id or '未指派' }}</div></div>
+            <div class="kv"><div class="k">SLA 截止</div><div class="v">{{ (case.sla_deadline|string)[:19] if case.sla_deadline else '—' }}</div></div>
+            <div class="kv"><div class="k">创建时间</div><div class="v" data-reltime="{{ case.created_at }}">{{ (case.created_at|string)[:19] }}</div></div>
+            <div class="kv"><div class="k">处置结果</div><div class="v">{{ case.resolution or '—' }}</div></div>
         </div>
-    </div>
-
-    <div class="card">
-        <h2>聚合规则</h2>
-        {% set agg = case.metadata.aggregation_rule if case.metadata and case.metadata.aggregation_rule else {} %}
-        {% if agg is mapping and agg.get('label') %}
-        <div style="margin-bottom:12px;">
-            {% if agg.get('source') == 'ai_rule' %}
-            <span class="badge badge-investigating" style="font-size:0.9em;padding:4px 12px;">AI规则</span>
-            {% else %}
-            <span class="badge badge-medium" style="font-size:0.9em;padding:4px 12px;">即时规则</span>
-            {% endif %}
-            <span style="margin-left:8px;font-weight:600;">{{ agg.label }}</span>
+        {% if meta.routing %}
+        <div class="kv-grid" style="margin-top:16px;">
+            <div class="kv"><div class="k">创建方式</div><div class="v">{{ meta.routing.created_by or 'auto' }}</div></div>
+            {% if meta.routing.split_from %}<div class="kv"><div class="k">拆分来源</div><div class="v mono">{{ meta.routing.split_from }}</div></div>{% endif %}
         </div>
-        <div class="detail-grid">
-            <div class="label">匹配维度</div>
-            <div class="value">
-                {% for dim in agg.get('dimensions', []) %}
-                <code style="margin-right:6px;">{{ dim }}</code>
-                {% endfor %}
-            </div>
-            <div class="label">聚合窗口</div>
-            <div class="value">{{ agg.get('window_minutes', '-') }} 分钟</div>
-            {% if agg.get('key') %}
-            <div class="label">聚合Key</div>
-            <div class="value"><code>{{ agg.key }}</code></div>
-            {% endif %}
-            <div class="label">生成者</div>
-            <div class="value">{{ agg.get('generated_by', '-') }}</div>
+        {% endif %}
+        {% if case.ai_summary %}
+        <div style="margin-top:16px;padding:12px 14px;background:var(--c-primary-soft);border-radius:var(--radius-sm);font-size:13px;">
+            <strong style="color:var(--c-primary-hover);">AI 摘要：</strong>{{ case.ai_summary }}
+            {% if case.ai_recommendation %}<div style="margin-top:6px;color:var(--c-text-secondary);"><strong>AI 建议：</strong>{{ case.ai_recommendation }}</div>{% endif %}
         </div>
-        {% else %}
-        <p style="color:#999;">未设置聚合规则（手动创建）</p>
         {% endif %}
     </div>
-</div>
 
-<div class="card">
-    <h2>AI分析</h2>
-    <div class="detail-grid">
-        <div class="label">AI摘要</div>
-        <div class="value">{{ case.ai_summary or '暂无' }}</div>
-        <div class="label">AI建议</div>
-        <div class="value">{{ case.ai_recommendation or '暂无' }}</div>
+    <div class="card">
+        <div class="card-title">更新状态</div>
+        <form method="post" action="/cases/{{ case.case_id }}/update" data-confirm="确认更新该 Case 状态？">
+            <div class="form-grid">
+                <div class="field">
+                    <label>状态</label>
+                    <select name="status">
+                        <option value="">不变更</option>
+                        {% for s, label in [('new','新建'),('assigned','已指派'),('investigating','调查中'),('responding','响应中'),('resolved','已解决'),('closed','已关闭')] %}
+                        <option value="{{ s }}">{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="field">
+                    <label>负责人</label>
+                    <input type="text" name="assignee" placeholder="不变更留空">
+                </div>
+                <div class="field full">
+                    <label>处置结果</label>
+                    <input type="text" name="resolution" placeholder="不变更留空">
+                </div>
+            </div>
+            <div style="margin-top:16px;">
+                <button type="submit" class="btn primary">更新</button>
+            </div>
+        </form>
     </div>
 </div>
 
 <div class="card">
-    <h2>更新状态</h2>
-    <form method="post" action="/cases/{{ case.case_id }}/update" style="display:flex;gap:12px;align-items:flex-end;">
-        <div class="form-group" style="margin:0;">
-            <label>状态</label>
-            <select name="status">
-                <option value="">不变更</option>
-                {% for s in ['new','assigned','investigating','responding','resolved','closed'] %}
-                <option value="{{ s }}">{{ s }}</option>
-                {% endfor %}
-            </select>
-        </div>
-        <div class="form-group" style="margin:0;">
-            <label>负责人</label>
-            <input type="text" name="assignee" placeholder="不变更留空">
-        </div>
-        <div class="form-group" style="margin:0;flex:1;">
-            <label>处置结果</label>
-            <input type="text" name="resolution" placeholder="不变更留空">
-        </div>
-        <button type="submit" class="btn btn-primary btn-sm">更新</button>
-    </form>
-</div>
-
-<div class="card">
-    <h2>关联告警 ({{ alerts|length }})</h2>
+    <div class="card-title">关联告警 <span class="hint">{{ alerts | length }} 条</span></div>
     {% if alerts %}
-    <table>
-        <thead>
-            <tr>
-                <th>Alert ID</th>
-                <th>规则</th>
-                <th>级别</th>
-                <th>源IP</th>
-                <th>目标IP</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for a in alerts %}
-            <tr>
-                <td><a href="/alerts/{{ a.alert_id }}">{{ a.alert_id[:20] }}</a></td>
-                <td>{{ a.rule_name or 'N/A' }}</td>
-                <td><span class="badge badge-{{ a.severity }}">{{ a.severity }}</span></td>
-                <td>{{ a.src_ip or '-' }}</td>
-                <td>{{ a.dst_ip or '-' }}</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+    <div class="table-wrap">
+        <table class="data">
+            <thead>
+                <tr><th>Alert ID</th><th>规则</th><th>级别</th><th>源 IP</th><th>目标 IP</th><th>时间</th><th></th></tr>
+            </thead>
+            <tbody>
+                {% for a in alerts %}
+                <tr>
+                    <td class="mono"><a href="/alerts/{{ a.alert_id }}">{{ a.alert_id }}</a></td>
+                    <td>{{ a.rule_name or '—' }}</td>
+                    <td>{{ sev_badge(a.severity) }}</td>
+                    <td class="mono">{{ a.src_ip or '—' }}</td>
+                    <td class="mono">{{ a.dst_ip or '—' }}</td>
+                    <td class="muted" data-reltime="{{ a.timestamp }}">{{ (a.timestamp|string)[:19] }}</td>
+                    <td><a href="/alerts/{{ a.alert_id }}" class="btn sm">详情</a></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
     {% else %}
-    <p style="color:#999;">暂无关联告警</p>
+    {{ empty_state("无关联告警", "分流引擎汇入的告警会显示在这里") }}
     {% endif %}
 </div>
 
 <div class="card">
-    <h2>事件时间线 ({{ events|length }})</h2>
+    <div class="card-title">时间线 <span class="hint">{{ events | length }} 个事件 · 全生命周期留痕</span></div>
     {% if events %}
-    <div class="timeline-enhanced">
-        {% for e in events|reverse %}
-        {% set evt_type = e.event_type %}
-        {% set evt_color = event_colors.get(evt_type, '#666') %}
-        {% set evt_icon = event_icons.get(evt_type, '&#128196;') %}
-        {% set evt_label = event_labels.get(evt_type, evt_type) %}
-        <div class="timeline-entry" style="border-left-color: {{ evt_color }};">
-            <div class="timeline-header">
-                <span class="timeline-icon" style="background: {{ evt_color }};">{{ evt_icon|safe }}</span>
-                <span class="timeline-type" style="color: {{ evt_color }};">{{ evt_label }}</span>
-                <span class="timeline-actor">{{ e.actor or 'system' }}</span>
-                <span class="timeline-time">{{ (e.timestamp|string)[:19] if e.timestamp else '' }}</span>
+    <div class="timeline">
+        {% for e in events %}
+        {% set detail = e.detail if e.detail is mapping else {} %}
+        <div class="tl-item tl-{{ e.event_type }}">
+            <div class="tl-dot"></div>
+            <div class="tl-head">
+                <span class="tl-type">{{ event_labels.get(e.event_type, e.event_type) }}</span>
+                <span class="tl-actor">{{ e.actor or 'system' }}</span>
+                <span class="tl-time" data-reltime="{{ e.timestamp }}">{{ (e.timestamp|string)[:19] }}</span>
             </div>
-            {% if e.detail and e.detail is mapping %}
-            <div class="timeline-detail">
-                {% if evt_type == 'status_changed' or evt_type == 'case_reopened' %}
-                    <span class="badge badge-{{ e.detail.get('from', '') }}">{{ e.detail.get('from', '') }}</span>
-                    <span style="margin:0 6px;">→</span>
-                    <span class="badge badge-{{ e.detail.get('to', '') }}">{{ e.detail.get('to', '') }}</span>
-                    {% if e.detail.get('reason') %}
-                    <span class="timeline-reason">({{ e.detail.reason }})</span>
-                    {% endif %}
-                {% elif evt_type == 'alert_added' %}
-                    <span>告警 <code>{{ e.detail.get('alert_id', '')[:20] }}</code></span>
-                    {% if e.detail.get('rule_name') %}
-                    <span> - {{ e.detail.rule_name }}</span>
-                    {% endif %}
-                    {% if e.detail.get('reason') %}
-                    <span class="timeline-reason">({{ e.detail.reason }})</span>
-                    {% endif %}
-                {% elif evt_type == 'ai_triage_completed' %}
-                    {% if e.detail.get('summary') %}
-                    <div class="timeline-summary">{{ e.detail.summary[:200] }}{% if e.detail.summary|length > 200 %}...{% endif %}</div>
-                    {% endif %}
-                {% elif evt_type == 'ai_rule_generated' %}
-                    <span>规则: {{ e.detail.get('label', '') }}</span>
-                    {% if e.detail.get('dimensions') %}
-                    <span> | 维度: {{ e.detail.dimensions|join(', ') }}</span>
-                    {% endif %}
-                {% elif evt_type == 'aggregation_rule_created' or evt_type == 'aggregation_rule_updated' %}
-                    <span>{{ e.detail.get('label', '') }}</span>
-                    {% if e.detail.get('source') == 'ai_rule' %}
-                    <span class="badge badge-investigating">AI</span>
-                    {% else %}
-                    <span class="badge badge-medium">即时</span>
-                    {% endif %}
-                {% elif evt_type == 'assigned' or evt_type == 'unassigned' %}
-                    {% if e.detail.get('from') %}<span>从 {{ e.detail.from }}</span>{% endif %}
-                    {% if e.detail.get('to') %}<span> → {{ e.detail.to }}</span>{% endif %}
-                {% elif evt_type == 'priority_changed' %}
-                    <span>P{{ e.detail.get('from', '') }} → P{{ e.detail.get('to', '') }}</span>
-                {% elif evt_type == 'severity_changed' %}
-                    <span class="badge badge-{{ e.detail.get('from', '') }}">{{ e.detail.get('from', '') }}</span>
-                    <span style="margin:0 6px;">→</span>
-                    <span class="badge badge-{{ e.detail.get('to', '') }}">{{ e.detail.get('to', '') }}</span>
-                {% elif evt_type == 'note_added' %}
-                    <div class="timeline-note">{{ e.detail.get('note', '') }}</div>
-                {% elif evt_type == 'action_executed' %}
-                    <span>{{ e.detail.get('action_type', '') }} → {{ e.detail.get('target', '') }}</span>
-                    {% if e.detail.get('result') %}
-                    <span class="timeline-reason">结果: {{ e.detail.result }}</span>
-                    {% endif %}
-                {% elif evt_type == 'playbook_started' or evt_type == 'playbook_completed' or evt_type == 'playbook_failed' %}
-                    <span>Playbook: <code>{{ e.detail.get('playbook_id', '') }}</code></span>
-                    {% if e.detail.get('error') %}
-                    <span class="timeline-error">错误: {{ e.detail.error }}</span>
-                    {% endif %}
-                {% else %}
-                    <span class="timeline-detail-text">{{ e.detail|tojson }}</span>
+            {% if detail %}
+            <div class="tl-body">
+                {% if detail.reason %}<div>{{ detail.reason }}</div>{% endif %}
+                {% if detail.alert_id %}
+                    <div class="mono">{{ detail.alert_id }} {{ detail.rule_name or '' }}
+                    {% if detail.src_ip %}{{ detail.src_ip }} → {{ detail.dst_ip }}{% endif %}</div>
                 {% endif %}
+                {% if detail.summary %}<div>{{ detail.summary }}</div>{% endif %}
+                {% if detail.severity_confidence is defined and detail.severity_confidence is not none %}
+                    <div>置信度：{{ '%.2f' | format(detail.severity_confidence) }} · 分类：{{ detail.category }}</div>
+                {% endif %}
+                {% if detail.alerts_moved is defined %}<div>迁移告警 {{ detail.alerts_moved }} 条</div>{% endif %}
             </div>
             {% endif %}
         </div>
         {% endfor %}
     </div>
     {% else %}
-    <p style="color:#999;">暂无事件</p>
+    {{ empty_state("暂无事件") }}
     {% endif %}
 </div>
 {% endblock %}

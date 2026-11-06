@@ -1,108 +1,123 @@
 {% extends "base.html" %}
+{% from "_macros.html" import stat_card, empty_state %}
 {% block title %}分流路由 - AiCSO{% endblock %}
+{% block page_title %}分流路由{% endblock %}
+{% block page_desc %}System One 判定引擎 · 候选索引 · 决策审计{% endblock %}
+
 {% block content %}
-<div class="header">
-    <h1>分流路由</h1>
+<div class="stats-grid">
+    {{ stat_card("引擎状态", "降级中" if status.degraded else ("System One" if status.system_one_enabled else "本地兜底"),
+                 accent=("medium" if status.degraded else "success")) }}
+    {{ stat_card("已路由", status.metrics.routed_total, "累计决策", accent="info") }}
+    {{ stat_card("并入率", (status.metrics.route_to_ratio ~ '') if status.metrics.route_to_ratio is defined else '—',
+                 "汇入已有Case占比", accent="success") }}
+    {{ stat_card("路由 P99", (status.metrics.latency.p99_ms ~ ' ms') if status.metrics.latency.p99_ms is not none else '—',
+                 "ingest→路由完成", accent="high") }}
+    {{ stat_card("积压年龄", (status.metrics.backlog_age_ms ~ ' ms') if status.metrics.backlog_age_ms is not none else '—',
+                 accent="medium") }}
+    {{ stat_card("System One 用量", status.metrics.systemone_requests_total,
+                 status.metrics.systemone_tokens_total ~ " tokens", accent="info") }}
 </div>
 
-<div class="stats">
-    <div class="stat-card">
-        <div class="label">System One</div>
-        <div class="value">{% if status.system_one_enabled %}启用{% else %}本地模式{% endif %}</div>
-    </div>
-    <div class="stat-card">
-        <div class="label">降级状态</div>
-        <div class="value" style="{% if status.degraded %}color:#f44336;{% else %}color:#4caf50;{% endif %}">{% if status.degraded %}降级中{% else %}正常{% endif %}</div>
-    </div>
-    <div class="stat-card">
-        <div class="label">路由队列</div>
-        <div class="value">{{ status.queue_depth }} / {{ status.queue_max }}</div>
-    </div>
-    <div class="stat-card">
-        <div class="label">候选索引活跃Case</div>
-        <div class="value">{{ status.index.active_cases }}</div>
-    </div>
-    <div class="stat-card">
-        <div class="label">决策缓存</div>
-        <div class="value">{{ status.cache_size }}</div>
+<div class="card">
+    <div class="card-title">运行明细</div>
+    <div class="kv-grid">
+        <div class="kv"><div class="k">路由队列</div><div class="v">{{ status.queue_depth }} / {{ status.queue_max }}</div></div>
+        <div class="kv"><div class="k">候选索引活跃Case</div><div class="v">{{ status.index.active_cases }}</div></div>
+        <div class="kv"><div class="k">实体键数量</div><div class="v">{{ status.index.entity_keys }}</div></div>
+        <div class="kv"><div class="k">决策缓存</div><div class="v">{{ status.cache_size }}</div></div>
+        <div class="kv"><div class="k">汇入已有Case</div><div class="v">{{ status.metrics.route_to_total }}</div></div>
+        <div class="kv"><div class="k">新建Case</div><div class="v">{{ status.metrics.cases_created_total }}</div></div>
+        <div class="kv"><div class="k">缓存命中</div><div class="v">{{ status.metrics.cache_hit_total }}</div></div>
+        <div class="kv"><div class="k">本地兜底决策</div><div class="v">{{ status.metrics.fallback_total }}</div></div>
+        <div class="kv"><div class="k">降级决策数</div><div class="v">{{ status.metrics.degraded_total }}</div></div>
+        <div class="kv"><div class="k">低置信度复核</div><div class="v">{{ status.metrics.low_confidence_total }}</div></div>
+        <div class="kv"><div class="k">延迟 P50 / P95</div>
+            <div class="v">{{ status.metrics.latency.p50_ms | default('—', true) }} / {{ status.metrics.latency.p95_ms | default('—', true) }} ms</div></div>
+        <div class="kv"><div class="k">自动合并扫描</div>
+            <div class="v">
+                <button class="btn sm" id="merge-sweep-btn" data-confirm="扫描候选对并自动合并？">立即扫描</button>
+            </div></div>
     </div>
 </div>
 
 <div class="card">
-    <h2>运行指标</h2>
-    <table>
-        <thead>
-            <tr><th>指标</th><th>值</th><th>指标</th><th>值</th></tr>
-        </thead>
-        <tbody>
-            <tr><td>已提交</td><td>{{ status.metrics.submitted_total }}</td>
-                <td>已路由</td><td>{{ status.metrics.routed_total }}</td></tr>
-            <tr><td>汇入已有Case</td><td>{{ status.metrics.route_to_total }}</td>
-                <td>新建Case</td><td>{{ status.metrics.cases_created_total }}</td></tr>
-            <tr><td>并入率</td><td>{{ status.metrics.route_to_ratio | default('-', true) }}</td>
-                <td>缓存命中</td><td>{{ status.metrics.cache_hit_total }}</td></tr>
-            <tr><td>本地兜底决策</td><td>{{ status.metrics.fallback_total }}</td>
-                <td>降级决策数</td><td>{{ status.metrics.degraded_total }}</td></tr>
-            <tr><td>低置信度复核</td><td>{{ status.metrics.low_confidence_total }}</td>
-                <td>System One调用</td><td>{{ status.metrics.systemone_requests_total }} ({{ status.metrics.systemone_tokens_total }} tokens)</td></tr>
-            <tr><td>积压年龄</td><td>{{ status.metrics.backlog_age_ms | default('-', true) }} ms</td>
-                <td>路由延迟 P50/P95/P99</td><td>
-                    {{ status.metrics.latency.p50_ms | default('-', true) }} /
-                    {{ status.metrics.latency.p95_ms | default('-', true) }} /
-                    {{ status.metrics.latency.p99_ms | default('-', true) }} ms</td></tr>
-        </tbody>
-    </table>
-</div>
-
-<div class="card">
-    <h2>候选索引（活跃Case槽位）</h2>
+    <div class="card-title">候选索引（活跃 Case 槽位）</div>
     {% if slots %}
-    <table>
-        <thead>
-            <tr><th>Case ID</th><th>摘要</th><th>累计汇入</th><th>实体数</th><th>最近活跃</th></tr>
-        </thead>
-        <tbody>
-            {% for slot in slots %}
-            <tr>
-                <td><a href="/cases/{{ slot.case_id }}">{{ slot.case_id }}</a></td>
-                <td>{{ slot.summary[:60] }}</td>
-                <td>{{ slot.hits }}</td>
-                <td>{{ slot.entity_count }}</td>
-                <td>{{ (slot.last_seen|string)[:19] }} ({{ '%.0f'|format(slot.idle_seconds) }}s前)</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+    <div class="table-wrap">
+        <table class="data">
+            <thead>
+                <tr><th>Case ID</th><th>摘要</th><th>累计汇入</th><th>实体数</th><th>最近活跃</th></tr>
+            </thead>
+            <tbody>
+                {% for slot in slots %}
+                <tr>
+                    <td><a href="/cases/{{ slot.case_id }}" class="mono">{{ slot.case_id }}</a></td>
+                    <td>{{ slot.summary[:60] }}</td>
+                    <td class="num">{{ slot.hits }}</td>
+                    <td class="num">{{ slot.entity_count }}</td>
+                    <td class="muted" data-reltime="{{ slot.last_seen }}">{{ (slot.last_seen|string)[:19] }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
     {% else %}
-    <p style="color:#999;">索引为空（新告警到达后自动建立）</p>
+    {{ empty_state("索引为空", "新告警到达后自动建立候选索引") }}
     {% endif %}
 </div>
 
 <div class="card">
-    <h2>最近路由决策（审计）</h2>
+    <div class="card-title">最近路由决策 <span class="hint">审计记录 · 最近 30 条</span></div>
     {% if decisions %}
-    <table>
-        <thead>
-            <tr><th>时间</th><th>告警</th><th>决策</th><th>目标Case</th><th>来源</th><th>置信度</th><th>候选数</th><th>延迟</th><th>降级</th></tr>
-        </thead>
-        <tbody>
-            {% for d in decisions %}
-            <tr>
-                <td>{{ (d.created_at|string)[:19] }}</td>
-                <td><a href="/alerts/{{ d.alert_id }}">{{ d.alert_id }}</a></td>
-                <td>{% if d.decision == 'route_to' %}<span style="color:#4caf50;">汇入</span>{% else %}<span style="color:#ff9800;">新建</span>{% endif %}</td>
-                <td>{% if d.case_id %}<a href="/cases/{{ d.case_id }}">{{ d.case_id }}</a>{% else %}-{% endif %}</td>
-                <td>{{ d.source }}</td>
-                <td>{{ d.confidence if d.confidence is not none else '-' }}</td>
-                <td>{{ d.candidates }}</td>
-                <td>{{ '%.0f'|format(d.latency_ms if d.latency_ms else 0) }}ms</td>
-                <td>{% if d.degraded %}⚠{% endif %}</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
+    <div class="table-wrap">
+        <table class="data">
+            <thead>
+                <tr><th>时间</th><th>告警</th><th>决策</th><th>目标 Case</th><th>来源</th>
+                    <th>置信度</th><th>候选</th><th>延迟</th><th>降级</th></tr>
+            </thead>
+            <tbody>
+                {% for d in decisions %}
+                <tr>
+                    <td class="muted" data-reltime="{{ d.created_at }}">{{ (d.created_at|string)[:19] }}</td>
+                    <td class="mono"><a href="/alerts/{{ d.alert_id }}">{{ d.alert_id }}</a></td>
+                    <td>
+                        {% if d.decision == 'route_to' %}
+                        <span class="badge low"><span class="dot"></span>汇入</span>
+                        {% else %}
+                        <span class="badge medium"><span class="dot"></span>新建</span>
+                        {% endif %}
+                    </td>
+                    <td>{% if d.case_id %}<a href="/cases/{{ d.case_id }}" class="mono">{{ d.case_id }}</a>{% else %}—{% endif %}</td>
+                    <td class="muted">{{ d.source }}</td>
+                    <td class="num">{{ '%.2f' | format(d.confidence) if d.confidence is not none else '—' }}</td>
+                    <td class="num">{{ d.candidates }}</td>
+                    <td class="num">{{ '%.0f' | format(d.latency_ms if d.latency_ms else 0) }}ms</td>
+                    <td>{% if d.degraded %}<span class="badge critical"><span class="dot"></span>降级</span>{% else %}—{% endif %}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
     {% else %}
-    <p style="color:#999;">暂无决策记录</p>
+    {{ empty_state("暂无决策记录") }}
     {% endif %}
 </div>
 {% endblock %}
+<script>
+(function () {
+    const btn = document.getElementById("merge-sweep-btn");
+    if (!btn) return;
+    btn.addEventListener("click", async () => {
+        if (!window.confirm("扫描候选对并自动合并？")) return;
+        btn.classList.add("loading");
+        try {
+            const r = await fetchJSON("/router/api/merge-sweep", {method: "POST"});
+            toast("扫描完成：评估 " + r.evaluated + " 对候选", "success");
+            setTimeout(() => location.reload(), 1200);
+        } catch (e) {
+            btn.classList.remove("loading");
+        }
+    });
+})();
+</script>

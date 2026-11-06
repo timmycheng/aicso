@@ -1,51 +1,50 @@
 {% extends "base.html" %}
-{% block title %}告警管理 - AiCSO{% endblock %}
+{% from "_macros.html" import sev_badge, empty_state %}
+{% block title %}告警 - AiCSO{% endblock %}
+{% block page_title %}告警{% endblock %}
+{% block page_desc %}流式接入的安全信号：{{ total }} 条{% endblock %}
+
 {% block content %}
-<div class="header">
-    <h1>告警管理</h1>
+<div class="filters">
+    <form method="get" action="/alerts" style="display:flex;gap:8px;flex-wrap:wrap;">
+        <input type="text" name="case_id" placeholder="按 Case ID 过滤" value="{{ filter_case_id or '' }}">
+        <input type="text" name="source" placeholder="按来源过滤" value="{{ filter_source or '' }}">
+        <button class="btn sm" type="submit">过滤</button>
+        {% if filter_case_id or filter_source %}
+        <a href="/alerts" class="btn sm">清除</a>
+        {% endif %}
+    </form>
 </div>
 
 <div class="card">
-    <form method="get" style="display:flex;gap:12px;margin-bottom:16px;align-items:flex-end;">
-        <div class="form-group" style="margin:0;">
-            <label>Case ID</label>
-            <input type="text" name="case_id" value="{{ filter_case_id or '' }}" placeholder="筛选Case ID" style="width:200px;">
-        </div>
-        <div class="form-group" style="margin:0;">
-            <label>来源</label>
-            <input type="text" name="source" value="{{ filter_source or '' }}" placeholder="筛选来源" style="width:150px;">
-        </div>
-        <button type="submit" class="btn btn-primary btn-sm">筛选</button>
-    </form>
-
-    <table>
-        <thead>
-            <tr>
-                <th>Alert ID</th>
-                <th>来源</th>
-                <th>规则名称</th>
-                <th>严重级别</th>
-                <th>源IP</th>
-                <th>目标IP</th>
-                <th>Case ID</th>
-                <th>时间</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for a in alerts %}
-            <tr>
-                <td><a href="/alerts/{{ a.alert_id }}">{{ a.alert_id[:20] }}</a></td>
-                <td>{{ a.source or '' }}</td>
-                <td>{{ a.rule_name or 'N/A' }}</td>
-                <td><span class="badge badge-{{ a.severity }}">{{ a.severity }}</span></td>
-                <td>{{ a.src_ip or '-' }}</td>
-                <td>{{ a.dst_ip or '-' }}</td>
-                <td>{% if a.case_id %}<a href="/cases/{{ a.case_id }}">{{ a.case_id }}</a>{% else %}-{% endif %}</td>
-                <td>{{ (a.timestamp|string)[:19] if a.timestamp else '-' }}</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-    <p style="margin-top:12px;color:#999;">共 {{ total }} 条</p>
+    {% if alerts %}
+    <div class="table-wrap">
+        <table class="data">
+            <thead>
+                <tr><th>Alert ID</th><th>规则</th><th>级别</th><th>源 IP</th><th>目标 IP</th>
+                    <th>来源</th><th>归属 Case</th><th>时间</th></tr>
+            </thead>
+            <tbody>
+                {% for a in alerts %}
+                <tr>
+                    <td class="mono"><a href="/alerts/{{ a.alert_id }}">{{ a.alert_id }}</a></td>
+                    <td>{{ a.rule_name or '—' }}</td>
+                    <td>{{ sev_badge(a.severity) }}</td>
+                    <td class="mono">{{ a.src_ip or '—' }}</td>
+                    <td class="mono">{{ a.dst_ip or '—' }}</td>
+                    <td class="muted">{{ a.source }}</td>
+                    <td>
+                        {% if a.case_id %}<a href="/cases/{{ a.case_id }}" class="mono">{{ a.case_id }}</a>
+                        {% else %}<span class="muted">待路由</span>{% endif %}
+                    </td>
+                    <td class="muted" data-reltime="{{ a.timestamp }}">{{ (a.timestamp|string)[:19] }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    {{ empty_state("没有匹配的告警", "通过数据源或 Mock 注入接入告警") }}
+    {% endif %}
 </div>
 {% endblock %}

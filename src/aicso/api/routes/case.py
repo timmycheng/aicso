@@ -107,11 +107,20 @@ async def case_detail(
             except (json.JSONDecodeError, TypeError):
                 event["detail"] = {}
 
+    # metadata从DB读回是JSON字符串，解析为dict供模板渲染路由信息
+    meta = case.get("metadata", "{}")
+    if isinstance(meta, str):
+        try:
+            meta = json.loads(meta)
+        except (json.JSONDecodeError, TypeError):
+            meta = {}
+
     return templates.TemplateResponse(
         request,
         "cases/detail.html",
         {
             "case": case, "alerts": alerts, "events": events,
+            "meta": meta,
             "event_labels": EVENT_TYPE_LABELS,
             "event_icons": EVENT_TYPE_ICONS,
             "event_colors": EVENT_TYPE_COLORS,

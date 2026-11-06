@@ -1,107 +1,79 @@
 {% extends "base.html" %}
-{% block title %}Mock数据生成 - AiCSO{% endblock %}
+{% from "_macros.html" import sev_badge, empty_state %}
+{% block title %}Mock 注入 - AiCSO{% endblock %}
+{% block page_title %}Mock 注入{% endblock %}
+{% block page_desc %}生成 ECS 格式仿真告警，走真实分流流水线（演示/压测）{% endblock %}
+
 {% block content %}
-<div class="header">
-    <h1>Mock告警数据生成器</h1>
-</div>
-
-<p style="color:#666;margin-bottom:20px;">基于 Elastic Security (ECS) 格式生成仿真安全告警数据，支持注入到 AiCSO 引擎进行完整链路测试。</p>
-
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
-    <div class="card">
-        <h2>生成配置</h2>
-        <form method="post" action="/mock/generate">
-            <div class="form-group">
-                <label for="count">生成数量</label>
-                <input type="number" id="count" name="count" value="10" min="1" max="100">
+<div class="card" style="max-width:760px;">
+    <div class="card-title">生成参数</div>
+    <form method="post" action="/mock/generate">
+        <div class="form-grid">
+            <div class="field">
+                <label>数量</label>
+                <input type="number" name="count" value="10" min="1" max="500">
             </div>
-            <div class="form-group">
-                <label>攻击类别（不选则随机）</label>
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:4px;">
-                    {% for cat in categories %}
-                    <label style="display:flex;align-items:center;gap:6px;font-size:0.9em;cursor:pointer;">
-                        <input type="checkbox" name="categories" value="{{ cat }}"> {{ category_labels[cat] }}
+            <div class="field">
+                <label>注入方式</label>
+                <div class="checks">
+                    <label class="check-chip">
+                        <input type="checkbox" name="inject" value="true" checked>
+                        注入流水线（分流→建Case）
+                    </label>
+                </div>
+                <div class="help">不勾选则仅生成预览，不进入系统</div>
+            </div>
+            <div class="field full">
+                <label>攻击类型（不选=随机）</label>
+                <div class="checks">
+                    {% for c in categories %}
+                    <label class="check-chip">
+                        <input type="checkbox" name="categories" value="{{ c }}">
+                        {{ category_labels[c] }}
                     </label>
                     {% endfor %}
                 </div>
             </div>
-            <div class="form-group">
-                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
-                    <input type="checkbox" name="inject" value="true" checked>
-                    <span>注入到 AiCSO 引擎（创建Case + 聚合）</span>
-                </label>
-            </div>
-            <button type="submit" class="btn btn-primary">生成告警</button>
-        </form>
-    </div>
-
-    <div class="card">
-        <h2>ECS格式说明</h2>
-        <div style="font-size:0.85em;color:#555;line-height:1.7;">
-            <p>生成的告警遵循 <strong>Elastic Common Schema (ECS) 8.x</strong> 标准：</p>
-            <ul style="padding-left:18px;margin-top:8px;">
-                <li><code>event.*</code> — 事件分类、动作、结果</li>
-                <li><code>rule.*</code> — 规则ID、名称、严重级别、风险评分</li>
-                <li><code>source/destination.*</code> — 网络五元组</li>
-                <li><code>threat.*</code> — MITRE ATT&CK 战术和技术映射</li>
-                <li><code>host/user/agent.*</code> — 主机、用户、Agent信息</li>
-                <li><code>file/process.*</code> — 文件和进程信息（恶意软件场景）</li>
-            </ul>
-            <p style="margin-top:10px;color:#888;">数据自动转换为 AiCSO Alert 模型，保留完整 ECS 原始数据在 <code>raw_log</code> 字段中。</p>
         </div>
-    </div>
+        <div style="margin-top:20px;">
+            <button type="submit" class="btn primary">生成</button>
+        </div>
+    </form>
 </div>
 
 {% if result %}
-<div class="card" style="margin-top:16px;">
-    <h2>生成结果</h2>
-    <div class="stats" style="margin-bottom:16px;">
-        <div class="stat-card">
-            <div class="label">生成告警数</div>
-            <div class="value">{{ result.total }}</div>
-        </div>
-        <div class="stat-card">
-            <div class="label">已注入</div>
-            <div class="value">{{ result.injected }}</div>
-        </div>
-        <div class="stat-card">
-            <div class="label">新建/聚合Case</div>
-            <div class="value">{{ result.cases_created }}</div>
-        </div>
-    </div>
+<div class="banner info">
+    生成 <strong>{{ result.total }}</strong> 条 · 注入 <strong>{{ result.injected }}</strong> 条 ·
+    新建 Case <strong>{{ result.cases_created }}</strong> 个
+    <span style="flex:1"></span>
+    <a href="/cases">查看 Case 列表 →</a>
+</div>
 
+<div class="card">
+    <div class="card-title">预览（前 5 条）</div>
     {% if result.preview %}
-    <h3 style="margin-bottom:8px;font-size:0.95em;">告警预览（前5条）</h3>
-    <table>
-        <thead>
-            <tr>
-                <th>Alert ID</th>
-                <th>规则名称</th>
-                <th>级别</th>
-                <th>源IP</th>
-                <th>目标IP</th>
-                <th>主机</th>
-                <th>MITRE战术</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for a in result.preview %}
-            <tr>
-                <td><code>{{ a.alert_id }}</code></td>
-                <td>{{ a.rule_name }}</td>
-                <td><span class="badge badge-{{ a.severity }}">{{ a.severity }}</span></td>
-                <td>{{ a.src_ip }}</td>
-                <td>{{ a.dst_ip }}</td>
-                <td>{{ a.host }}</td>
-                <td style="font-size:0.85em;">{{ a.mitre }}</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-    <p style="margin-top:12px;">
-        <a href="/cases" class="btn btn-sm">查看Case</a>
-        <a href="/alerts" class="btn btn-sm" style="margin-left:8px;">查看告警</a>
-    </p>
+    <div class="table-wrap">
+        <table class="data">
+            <thead>
+                <tr><th>Alert ID</th><th>规则</th><th>严重度</th><th>源 IP</th><th>目标 IP</th><th>主机</th><th>ATT&CK</th></tr>
+            </thead>
+            <tbody>
+                {% for p in result.preview %}
+                <tr>
+                    <td class="mono">{{ p.alert_id }}</td>
+                    <td>{{ p.rule_name }}</td>
+                    <td>{{ sev_badge(p.severity) }}</td>
+                    <td class="mono">{{ p.src_ip }}</td>
+                    <td class="mono">{{ p.dst_ip }}</td>
+                    <td>{{ p.host or '—' }}</td>
+                    <td class="muted">{{ p.mitre or '—' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    {{ empty_state("无预览数据") }}
     {% endif %}
 </div>
 {% endif %}

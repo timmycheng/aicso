@@ -1,60 +1,64 @@
 {% extends "base.html" %}
-{% block title %}Case管理 - AiCSO{% endblock %}
+{% from "_macros.html" import sev_badge, status_badge, empty_state, icon %}
+{% block title %}Case 管理 - AiCSO{% endblock %}
+{% block page_title %}Case 管理{% endblock %}
+{% block page_desc %}安全运营消费单位：{{ total }} 个 Case{% endblock %}
+
+{% block topbar_actions %}
+<a href="/cases/new" class="btn primary">{{ icon("plus") }} 新建 Case</a>
+{% endblock %}
+
 {% block content %}
-<div class="header">
-    <h1>Case管理</h1>
-    <a href="/cases/new" class="btn btn-primary">+ 新建Case</a>
+<div class="filters">
+    <form method="get" action="/cases" style="display:flex;gap:8px;flex-wrap:wrap;">
+        <select name="status">
+            <option value="">全部状态</option>
+            {% for s in ['new','assigned','investigating','responding','resolved','closed'] %}
+            <option value="{{ s }}" {% if filter_status == s %}selected{% endif %}>
+                {{ {'new':'新建','assigned':'已指派','investigating':'调查中','responding':'响应中','resolved':'已解决','closed':'已关闭'}[s] }}
+            </option>
+            {% endfor %}
+        </select>
+        <select name="severity">
+            <option value="">全部严重度</option>
+            {% for s in ['critical','high','medium','low','info'] %}
+            <option value="{{ s }}" {% if filter_severity == s %}selected{% endif %}>{{ s | upper }}</option>
+            {% endfor %}
+        </select>
+        <button class="btn sm" type="submit">过滤</button>
+        {% if filter_status or filter_severity %}
+        <a href="/cases" class="btn sm">清除</a>
+        {% endif %}
+    </form>
 </div>
 
 <div class="card">
-    <form method="get" style="display:flex;gap:12px;margin-bottom:16px;align-items:flex-end;">
-        <div class="form-group" style="margin:0;">
-            <label>状态</label>
-            <select name="status" style="width:150px;">
-                <option value="">全部</option>
-                {% for s in ['new','assigned','investigating','responding','resolved','closed'] %}
-                <option value="{{ s }}" {% if filter_status == s %}selected{% endif %}>{{ s }}</option>
+    {% if cases %}
+    <div class="table-wrap">
+        <table class="data">
+            <thead>
+                <tr>
+                    <th>Case ID</th><th>标题</th><th>严重度</th><th>状态</th>
+                    <th>优先级</th><th>负责人</th><th>创建时间</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for c in cases %}
+                <tr>
+                    <td><a href="/cases/{{ c.case_id }}" class="mono">{{ c.case_id }}</a></td>
+                    <td><a href="/cases/{{ c.case_id }}" style="color:var(--c-text);">{{ c.title[:50] }}</a></td>
+                    <td>{{ sev_badge(c.severity) }}</td>
+                    <td>{{ status_badge(c.status) }}</td>
+                    <td class="num">P{{ c.priority }}</td>
+                    <td>{{ c.assignee_id or '<span class="muted">未指派</span>' | safe }}</td>
+                    <td class="muted" data-reltime="{{ c.created_at }}">{{ (c.created_at|string)[:19] }}</td>
+                </tr>
                 {% endfor %}
-            </select>
-        </div>
-        <div class="form-group" style="margin:0;">
-            <label>严重级别</label>
-            <select name="severity" style="width:150px;">
-                <option value="">全部</option>
-                {% for s in ['critical','high','medium','low','info'] %}
-                <option value="{{ s }}" {% if filter_severity == s %}selected{% endif %}>{{ s }}</option>
-                {% endfor %}
-            </select>
-        </div>
-        <button type="submit" class="btn btn-primary btn-sm">筛选</button>
-    </form>
-
-    <table>
-        <thead>
-            <tr>
-                <th>Case ID</th>
-                <th>标题</th>
-                <th>严重级别</th>
-                <th>状态</th>
-                <th>负责人</th>
-                <th>SLA截止</th>
-                <th>创建时间</th>
-            </tr>
-        </thead>
-        <tbody>
-            {% for c in cases %}
-            <tr>
-                <td><a href="/cases/{{ c.case_id }}">{{ c.case_id }}</a></td>
-                <td>{{ c.title[:50] if c.title else '' }}</td>
-                <td><span class="badge badge-{{ c.severity }}">{{ c.severity }}</span></td>
-                <td><span class="badge badge-{{ c.status }}">{{ c.status }}</span></td>
-                <td>{{ c.assignee_id or '-' }}</td>
-                <td>{{ (c.sla_deadline|string)[:19] if c.sla_deadline else '-' }}</td>
-                <td>{{ (c.created_at|string)[:19] if c.created_at else '-' }}</td>
-            </tr>
-            {% endfor %}
-        </tbody>
-    </table>
-    <p style="margin-top:12px;color:#999;">共 {{ total }} 条</p>
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    {{ empty_state("没有匹配的 Case", "调整过滤条件，或通过 Mock 注入/数据源接入告警") }}
+    {% endif %}
 </div>
 {% endblock %}
