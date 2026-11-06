@@ -45,10 +45,12 @@ class ContextManager:
         case_store: CaseStore,
         alert_store: AlertStore,
         vector_store: VectorStore | None = None,
+        ops_store=None,
     ):
         self.case_store = case_store
         self.alert_store = alert_store
         self.vector_store = vector_store
+        self.ops_store = ops_store
 
     async def build_context(self, case_id: str) -> CaseContext:
         """构建Case完整上下文"""
@@ -97,3 +99,33 @@ class ContextManager:
             case_id=case_id,
             agent_name=agent_name,
         )
+
+    async def build_full_context(self, case_id: str) -> dict:
+        """Case完整运营视图（设计§3.2上下文四维度）：case+告警+时间线
+        +OpsRecord+实体摘要+合并/拆分关联"""
+
+        ctx = await self.build_context(case_id)
+        data = ctx.to_dict()
+
+        # 操作记录
+        if self.ops_store:
+            data["ops_records"] = await self.ops_store.list_by_case(case_id)
+
+        # 实体摘要（从告警提取，Case生长的实体维度）
+        entities: dict[str, set] = {"src_ips": set(), "dst_ips": set(), "rules": set()}
+        for a in ctx.alerts:
+            if a.get("src_ip"):
+                entities["src_ips"].add(a["src_ip"])
+            if a.get("dst_ip"):
+                entities["dst_ips"].add(a["dst_ip"])
+            if a.get("rule_name"):
+                entities["rules"].add(a["rule_name"])
+        data["entities"] = {k: sorted(v) for k, v in entities.items()}
+
+        # 合并/拆分关联
+        case_row = await self.case_store.get(case_id)
+        data["relations"] = {
+            "merged_into": case_row.get("merged_into") if case_row else None,
+            "split_from": case_row.get("split_from") if case_row else None,
+        }
+        return data

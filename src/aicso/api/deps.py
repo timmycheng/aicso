@@ -12,12 +12,14 @@ from aicso.core.approval import ApprovalEngine
 from aicso.core.context import ContextManager
 from aicso.core.datasource_manager import DataSourceManager
 from aicso.core.event_bus import EventBus
+from aicso.core.ops import OpsService
 from aicso.core.orchestrator import Orchestrator
 from aicso.router.engine import RouterEngine
 from aicso.router.merge import MergeSplitEngine
 from aicso.store.alert_store import AlertStore
 from aicso.store.case_store import CaseStore
 from aicso.store.database import Database
+from aicso.store.ops_store import OpsRecordStore
 from aicso.store.routing_store import RoutingDecisionStore
 from aicso.systemone.client import SystemOneClient
 
@@ -31,6 +33,7 @@ class AppState:
     case_store: CaseStore
     alert_store: AlertStore
     routing_store: RoutingDecisionStore
+    ops_service: OpsService
     event_bus: EventBus
     context_manager: ContextManager
     approval_engine: ApprovalEngine
@@ -59,8 +62,9 @@ async def init_app_state(config_path: str = "config.yaml") -> AppState:
     case_store = CaseStore(db)
     alert_store = AlertStore(db)
     routing_store = RoutingDecisionStore(db)
+    ops_service = OpsService(case_store, OpsRecordStore(db))
     event_bus = EventBus()
-    context_manager = ContextManager(case_store, alert_store)
+    context_manager = ContextManager(case_store, alert_store, ops_store=ops_service.ops_store)
     approval_engine = ApprovalEngine(event_bus)
 
     # System One 客户端（enabled=False 或缺 key → None，引擎进入纯本地模式）
@@ -98,6 +102,7 @@ async def init_app_state(config_path: str = "config.yaml") -> AppState:
         case_store, alert_store, context_manager, event_bus, approval_engine,
         router=router_engine,
         dispatcher=S2Dispatcher(systemone_client, scfg),
+        ops_service=ops_service,
         max_concurrent_triage=config.routing.s2_concurrency,
         llm_enabled=config.llm.enabled,
     )
@@ -117,6 +122,7 @@ async def init_app_state(config_path: str = "config.yaml") -> AppState:
         orchestrator=orchestrator,
         router=router_engine,
         merge_engine=merge_engine,
+        ops_service=ops_service,
         systemone_client=systemone_client,
     )
 

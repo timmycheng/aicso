@@ -211,3 +211,33 @@ async def api_case_detail(case_id: str, state: AppState = Depends(get_state)):
         event["color"] = EVENT_TYPE_COLORS.get(event["event_type"], "#666")
 
     return {"case": case, "alerts": alerts, "events": events}
+
+
+# --- 运营操作API（设计§7 OpsRecord） ---
+
+@router.get("/api/{case_id}/context")
+async def api_case_context(case_id: str, state: AppState = Depends(get_state)):
+    """Case完整运营视图：case+告警+时间线+操作记录+实体摘要+合并拆分关联"""
+    context = await state.context_manager.build_full_context(case_id)
+    if not context.get("case"):
+        return {"error": f"Case not found: {case_id}"}
+    return context
+
+
+@router.post("/api/{case_id}/ops")
+async def api_case_record_op(case_id: str, request: Request,
+                             state: AppState = Depends(get_state)):
+    """记录人工操作（补上下文/处置记录/拉人/升级等）"""
+    body = await request.json()
+    if await state.case_store.get(case_id) is None:
+        return {"error": f"Case not found: {case_id}"}
+    record = await state.ops_service.record_op(
+        case_id=case_id,
+        actor=body.get("actor", "analyst"),
+        actor_type=body.get("actor_type", "human"),
+        action=body.get("action", "manual_handle"),
+        params=body.get("params", {}),
+        result=body.get("result", {}),
+        summary=body.get("summary", ""),
+    )
+    return {"ok": True, "ops_id": record.id}
