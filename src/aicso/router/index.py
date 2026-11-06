@@ -93,6 +93,10 @@ class CaseRoutingIndex:
         """Case是否在索引中活跃（路由防御检查用，避免每路由一次SELECT）"""
         return case_id in self._slots
 
+    def entity_map(self) -> dict[str, set[str]]:
+        """实体倒排视图（合并候选发现用），返回副本"""
+        return {key: set(cids) for key, cids in self._entity_map.items()}
+
     def deactivate(self, case_id: str) -> None:
         """Case关闭/合并后移出候选（P2由CASE_STATUS_CHANGED事件驱动）"""
         slot = self._slots.pop(case_id, None)

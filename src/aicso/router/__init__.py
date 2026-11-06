@@ -11,6 +11,7 @@ from aicso.router.decision import (
 from aicso.router.engine import RouterEngine
 from aicso.router.fallback import LocalFallback
 from aicso.router.index import CaseRoutingIndex, CaseSlot, entity_keys_of
+from aicso.router.merge import CandidatePair, MergeEvaluation, MergeSplitEngine
 from aicso.router.metrics import RouterMetrics
 
 __all__ = [
@@ -23,7 +24,10 @@ __all__ = [
     "SRC_CACHE",
     "SRC_FALLBACK",
     "SRC_SYSTEM_ONE",
+    "CandidatePair",
     "CaseRoutingIndex",
+    "MergeEvaluation",
+    "MergeSplitEngine",
     "CaseSlot",
     "LocalFallback",
     "entity_keys_of",

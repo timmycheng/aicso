@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 
 from aicso.models.case import Case, CaseEvent
 from aicso.store.database import Database
@@ -80,6 +81,23 @@ class CaseStore:
         sql += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
         return await self.db.fetch_all(sql, tuple(params))
+
+    async def update_relation(
+        self, case_id: str,
+        merged_into: str | None = None,
+        split_from: str | None = None,
+    ) -> None:
+        """更新合并/拆分关联字段（合并/拆分引擎用）"""
+        if merged_into is not None:
+            await self.db.buffered_execute(
+                "UPDATE cases SET merged_into = ?, updated_at = ? WHERE case_id = ?",
+                (merged_into, datetime.utcnow().isoformat(), case_id),
+            )
+        if split_from is not None:
+            await self.db.buffered_execute(
+                "UPDATE cases SET split_from = ?, updated_at = ? WHERE case_id = ?",
+                (split_from, datetime.utcnow().isoformat(), case_id),
+            )
 
     async def add_event(self, case_id: str, event: CaseEvent) -> None:
         await self.db.buffered_execute(

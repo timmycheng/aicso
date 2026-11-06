@@ -14,6 +14,7 @@ from aicso.core.datasource_manager import DataSourceManager
 from aicso.core.event_bus import EventBus
 from aicso.core.orchestrator import Orchestrator
 from aicso.router.engine import RouterEngine
+from aicso.router.merge import MergeSplitEngine
 from aicso.store.alert_store import AlertStore
 from aicso.store.case_store import CaseStore
 from aicso.store.database import Database
@@ -35,6 +36,7 @@ class AppState:
     approval_engine: ApprovalEngine
     orchestrator: Orchestrator
     router: RouterEngine
+    merge_engine: MergeSplitEngine
     systemone_client: SystemOneClient | None = None
     datasource_manager: DataSourceManager | None = None
 
@@ -83,6 +85,15 @@ async def init_app_state(config_path: str = "config.yaml") -> AppState:
         client=systemone_client,
     )
 
+    merge_engine = MergeSplitEngine(
+        case_store=case_store,
+        alert_store=alert_store,
+        client=systemone_client,
+        scfg=scfg,
+        index=router_engine.index,
+        fallback=router_engine.fallback,
+    )
+
     orchestrator = Orchestrator(
         case_store, alert_store, context_manager, event_bus, approval_engine,
         router=router_engine,
@@ -105,6 +116,7 @@ async def init_app_state(config_path: str = "config.yaml") -> AppState:
         approval_engine=approval_engine,
         orchestrator=orchestrator,
         router=router_engine,
+        merge_engine=merge_engine,
         systemone_client=systemone_client,
     )
 

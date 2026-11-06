@@ -538,6 +538,7 @@ class RouterEngine:
             JOIN cases c ON c.case_id = a.case_id
             WHERE a.case_id IS NOT NULL
               AND c.status NOT IN ('resolved', 'closed')
+              AND c.merged_into IS NULL
             GROUP BY a.case_id, c.title, a.src_ip, a.dst_ip, a.rule_id
         """)
         count = self.index.rebuild(rows)
