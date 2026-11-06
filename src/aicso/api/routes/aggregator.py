@@ -49,7 +49,6 @@ async def api_aggregation_rules(state: AppState = Depends(get_state)):
         })
 
     immediate = []
-    from datetime import datetime
     for cache_key, (case_id, last_seen) in aggregator._immediate_cache.items():
         immediate.append({
             "cache_key": cache_key,

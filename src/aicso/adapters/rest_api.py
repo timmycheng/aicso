@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Any, Optional
 
 import httpx
 import structlog
@@ -43,9 +42,9 @@ class RestApiAdapter(DataSourceAdapter):
     description = "通用REST API适配器（SIEM对接）"
 
     def __init__(self):
-        self._client: Optional[httpx.AsyncClient] = None
+        self._client: httpx.AsyncClient | None = None
         self._config: dict = {}
-        self._last_fetch_time: Optional[datetime] = None
+        self._last_fetch_time: datetime | None = None
 
     async def connect(self, config: dict) -> bool:
         """连接SIEM API"""
@@ -156,8 +155,12 @@ class RestApiAdapter(DataSourceAdapter):
         severity_map = self._config.get("severity_mapping", {})
 
         # 提取字段
-        alert_id = _get_nested(raw, mapping.get("alert_id", "alert_id"), f"api-{uuid.uuid4().hex[:8]}")
-        source = _get_nested(raw, mapping.get("source", "source"), self._config.get("default_source", "siem"))
+        alert_id = _get_nested(
+            raw, mapping.get("alert_id", "alert_id"), f"api-{uuid.uuid4().hex[:8]}"
+        )
+        source = _get_nested(
+            raw, mapping.get("source", "source"), self._config.get("default_source", "siem")
+        )
         rule_id = str(_get_nested(raw, mapping.get("rule_id", "rule_id"), ""))
         rule_name = _get_nested(raw, mapping.get("rule_name", "rule_name"), "")
         raw_severity = _get_nested(raw, mapping.get("severity", "severity"), "medium")
@@ -171,8 +174,12 @@ class RestApiAdapter(DataSourceAdapter):
 
         # 严重级别映射
         severity = "medium"
-        if isinstance(raw_severity, int) or (isinstance(raw_severity, str) and raw_severity.isdigit()):
-            severity = severity_map.get(int(raw_severity), severity_map.get(str(raw_severity), "medium"))
+        if isinstance(raw_severity, int) or (
+            isinstance(raw_severity, str) and raw_severity.isdigit()
+        ):
+            severity = severity_map.get(
+                int(raw_severity), severity_map.get(str(raw_severity), "medium")
+            )
         elif isinstance(raw_severity, str):
             severity = raw_severity.lower()
             if severity not in ("critical", "high", "medium", "low", "info"):
@@ -183,7 +190,8 @@ class RestApiAdapter(DataSourceAdapter):
         if timestamp_raw:
             try:
                 if isinstance(timestamp_raw, (int, float)):
-                    timestamp = datetime.fromtimestamp(timestamp_raw / 1000 if timestamp_raw > 1e12 else timestamp_raw)
+                    ts_value = timestamp_raw / 1000 if timestamp_raw > 1e12 else timestamp_raw
+                    timestamp = datetime.fromtimestamp(ts_value)
                 else:
                     timestamp = datetime.fromisoformat(str(timestamp_raw).replace("Z", "+00:00"))
             except (ValueError, OSError):

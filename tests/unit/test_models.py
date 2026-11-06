@@ -1,13 +1,16 @@
 """模型层测试"""
-import pytest
-from datetime import datetime
 
-from aicso.models.case import (
-    Case, CaseStatus, CaseSeverity, CasePriority,
-    SEVERITY_PRIORITY_MAP, CASE_TRANSITIONS,
-)
+import pytest
+
 from aicso.models.alert import Alert
 from aicso.models.asset import Asset, AssetCriticality
+from aicso.models.case import (
+    SEVERITY_PRIORITY_MAP,
+    Case,
+    CasePriority,
+    CaseSeverity,
+    CaseStatus,
+)
 from aicso.models.ioc import IoC, IoCType
 from aicso.models.playbook import Playbook, PlaybookStep, RiskLevel
 
@@ -31,7 +34,7 @@ class TestCaseModel:
         case = Case(case_id="CSO-001", title="Test")
         event = case.transition_to(CaseStatus.ASSIGNED, actor="user1", reason="test")
         assert case.status == CaseStatus.ASSIGNED
-        assert event.event_type == "status_change"
+        assert event.event_type == "status_changed"
         assert event.detail["from"] == "new"
         assert event.detail["to"] == "assigned"
 
@@ -133,7 +136,10 @@ class TestPlaybookModel:
             name="Phishing Response",
             steps=[
                 PlaybookStep(name="Extract IoC", action="extract_ioc", auto=True),
-                PlaybookStep(name="Block IP", action="block_ip", approval_required=True, risk_level=RiskLevel.MEDIUM),
+                PlaybookStep(
+                    name="Block IP", action="block_ip", approval_required=True,
+                    risk_level=RiskLevel.MEDIUM,
+                ),
             ],
         )
         assert len(pb.steps) == 2

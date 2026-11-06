@@ -5,11 +5,10 @@ import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Optional
 
 import structlog
 
-from aicso.core.event_bus import EventBus, Event, EventType
+from aicso.core.event_bus import Event, EventBus, EventType
 
 logger = structlog.get_logger()
 
@@ -67,8 +66,8 @@ class ApprovalRequest:
     reason: str = ""
     status: ApprovalStatus = ApprovalStatus.PENDING
     requested_at: datetime = field(default_factory=datetime.utcnow)
-    resolved_at: Optional[datetime] = None
-    approved_by: Optional[str] = None
+    resolved_at: datetime | None = None
+    approved_by: str | None = None
 
 
 @dataclass
@@ -82,7 +81,7 @@ class ApprovalResult:
 class ApprovalEngine:
     """分级审批引擎"""
 
-    def __init__(self, event_bus: Optional[EventBus] = None):
+    def __init__(self, event_bus: EventBus | None = None):
         self.event_bus = event_bus
         self._pending: dict[str, ApprovalRequest] = {}
         self._futures: dict[str, asyncio.Future] = {}
@@ -147,7 +146,7 @@ class ApprovalEngine:
         try:
             result = await asyncio.wait_for(future, timeout=config.timeout_minutes * 60)
             return result
-        except asyncio.TimeoutError:
+        except TimeoutError:
             request.status = ApprovalStatus.TIMEOUT
             logger.warning("approval.timeout", request_id=request.request_id)
             return ApprovalResult(approved=False, reason="审批超时")

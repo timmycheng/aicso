@@ -1,10 +1,14 @@
 """聚合引擎测试 - 两阶段聚合"""
-import pytest
 from datetime import datetime, timedelta
 
+import pytest
+
 from aicso.aggregator.engine import (
-    AlertAggregator, CaseAggregationRule, _build_key,
-    IMMEDIATE_DIMENSION, IMMEDIATE_WINDOW_MINUTES,
+    IMMEDIATE_DIMENSION,
+    IMMEDIATE_WINDOW_MINUTES,
+    AlertAggregator,
+    CaseAggregationRule,
+    _build_key,
 )
 from aicso.models.alert import Alert
 

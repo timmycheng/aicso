@@ -1,16 +1,17 @@
 """集成测试 - 端到端流程"""
+import json
+import os
+import tempfile
+
 import pytest
 import pytest_asyncio
-import json
-import tempfile
-import os
 
-from aicso.store.database import Database
-from aicso.store.case_store import CaseStore
-from aicso.store.alert_store import AlertStore
-from aicso.models.case import Case, CaseStatus, CaseSeverity
-from aicso.models.alert import Alert
 from aicso.adapters.base import JSONFileAdapter
+from aicso.models.alert import Alert
+from aicso.models.case import Case, CaseSeverity, CaseStatus
+from aicso.store.alert_store import AlertStore
+from aicso.store.case_store import CaseStore
+from aicso.store.database import Database
 
 
 @pytest_asyncio.fixture
@@ -105,7 +106,9 @@ class TestEndToEnd:
             },
         ]
 
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8") as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, encoding="utf-8"
+        ) as f:
             json.dump(alert_data, f)
             f.flush()
 

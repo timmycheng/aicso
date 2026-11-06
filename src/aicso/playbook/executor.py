@@ -2,12 +2,11 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Optional
 
 import structlog
 
-from aicso.models.playbook import Playbook, PlaybookRun, RunStatus, ApprovalStatus
 from aicso.core.approval import ApprovalEngine, RiskLevel
+from aicso.models.playbook import ApprovalStatus, Playbook, PlaybookRun, RunStatus
 
 logger = structlog.get_logger()
 

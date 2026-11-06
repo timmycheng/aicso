@@ -1,11 +1,9 @@
 """Playbook解析器测试"""
-import pytest
-import tempfile
 import os
+import tempfile
 
-from aicso.playbook.parser import PlaybookParser
 from aicso.models.playbook import RiskLevel
-
+from aicso.playbook.parser import PlaybookParser
 
 SAMPLE_PLAYBOOK = """
 name: test_playbook
@@ -36,7 +34,9 @@ class TestPlaybookParser:
         assert pb.steps[1].risk_level == RiskLevel.MEDIUM
 
     def test_parse_file(self):
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False, encoding="utf-8") as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".yaml", delete=False, encoding="utf-8"
+        ) as f:
             f.write(SAMPLE_PLAYBOOK)
             f.flush()
             pb = PlaybookParser.parse_file(f.name)

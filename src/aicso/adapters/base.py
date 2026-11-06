@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Optional
 
 from aicso.models.alert import Alert
 
@@ -60,7 +59,7 @@ class SyslogAdapter(DataSourceAdapter):
     async def fetch_alerts(self, since: datetime) -> list[dict]:
         alerts = []
         try:
-            with open(self.log_path, "r", encoding="utf-8", errors="ignore") as f:
+            with open(self.log_path, encoding="utf-8", errors="ignore") as f:
                 f.seek(self._last_position)
                 for line in f:
                     line = line.strip()
@@ -96,7 +95,7 @@ class JSONFileAdapter(DataSourceAdapter):
 
     async def fetch_alerts(self, since: datetime) -> list[dict]:
         import json
-        with open(self.file_path, "r", encoding="utf-8") as f:
+        with open(self.file_path, encoding="utf-8") as f:
             data = json.load(f)
         return data if isinstance(data, list) else [data]
 

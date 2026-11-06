@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 
-from aicso.agents.base import BaseAgent, AgentResult
+from aicso.agents.base import AgentResult, BaseAgent
 
 
 class IntelAgent(BaseAgent):
@@ -25,7 +25,8 @@ class IntelAgent(BaseAgent):
 输出格式要求（JSON）：
 {
     "ioc_results": [
-        {"ioc": "1.2.3.4", "type": "ip", "malicious": true, "confidence": 0.9, "source": "...", "tags": ["botnet"]}
+        {"ioc": "1.2.3.4", "type": "ip", "malicious": true, "confidence": 0.9,
+         "source": "...", "tags": ["botnet"]}
     ],
     "attack_context": "攻击背景分析",
     "attck_tactics": ["TA0001"],
@@ -50,12 +51,21 @@ class IntelAgent(BaseAgent):
             if a_dict.get("dst_ip"):
                 ips_to_check.add(a_dict["dst_ip"])
 
+        iocs_json = (
+            json.dumps(
+                [i if isinstance(i, dict) else i.model_dump() for i in iocs],
+                ensure_ascii=False,
+            )
+            if iocs
+            else "无"
+        )
+
         messages = [
             {"role": "system", "content": self._build_system_prompt()},
             {"role": "user", "content": f"""请对以下IoC进行威胁情报分析：
 
 ## 已知IoC
-{json.dumps([i if isinstance(i, dict) else i.model_dump() for i in iocs], ensure_ascii=False) if iocs else '无'}
+{iocs_json}
 
 ## 从告警中提取的IP
 {list(ips_to_check) if ips_to_check else '无'}

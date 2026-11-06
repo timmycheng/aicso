@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from aicso.agents.base import BaseAgent, AgentResult
+from aicso.agents.base import AgentResult, BaseAgent
 
 
 class ReportAgent(BaseAgent):

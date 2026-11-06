@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -21,7 +20,7 @@ class IoC(BaseModel):
     type: IoCType
     value: str
     confidence: float = 0.5  # 0.0 - 1.0
-    source: Optional[str] = None
+    source: str | None = None
     tags: list[str] = Field(default_factory=list)
-    first_seen: Optional[datetime] = None
-    last_seen: Optional[datetime] = None
+    first_seen: datetime | None = None
+    last_seen: datetime | None = None

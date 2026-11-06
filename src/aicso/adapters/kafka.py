@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import datetime
-from typing import Optional
 
 import structlog
 
@@ -154,7 +153,9 @@ class KafkaAdapter(DataSourceAdapter):
         mapping = self._config.get("field_mapping", {})
         severity_map = self._config.get("severity_mapping", {})
 
-        alert_id = _get_nested(raw, mapping.get("alert_id", "alert_id"), f"kafka-{uuid.uuid4().hex[:8]}")
+        alert_id = _get_nested(
+            raw, mapping.get("alert_id", "alert_id"), f"kafka-{uuid.uuid4().hex[:8]}"
+        )
         source = _get_nested(raw, mapping.get("source", "source"), "kafka")
         rule_id = str(_get_nested(raw, mapping.get("rule_id", "rule_id"), ""))
         rule_name = _get_nested(raw, mapping.get("rule_name", "rule_name"), "")
@@ -169,8 +170,12 @@ class KafkaAdapter(DataSourceAdapter):
 
         # 严重级别映射
         severity = "medium"
-        if isinstance(raw_severity, int) or (isinstance(raw_severity, str) and str(raw_severity).isdigit()):
-            severity = severity_map.get(int(raw_severity), severity_map.get(str(raw_severity), "medium"))
+        if isinstance(raw_severity, int) or (
+            isinstance(raw_severity, str) and str(raw_severity).isdigit()
+        ):
+            severity = severity_map.get(
+                int(raw_severity), severity_map.get(str(raw_severity), "medium")
+            )
         elif isinstance(raw_severity, str):
             severity = raw_severity.lower()
             if severity not in ("critical", "high", "medium", "low", "info"):
@@ -181,7 +186,8 @@ class KafkaAdapter(DataSourceAdapter):
         if timestamp_raw:
             try:
                 if isinstance(timestamp_raw, (int, float)):
-                    timestamp = datetime.fromtimestamp(timestamp_raw / 1000 if timestamp_raw > 1e12 else timestamp_raw)
+                    ts_value = timestamp_raw / 1000 if timestamp_raw > 1e12 else timestamp_raw
+                    timestamp = datetime.fromtimestamp(ts_value)
                 else:
                     timestamp = datetime.fromisoformat(str(timestamp_raw).replace("Z", "+00:00"))
             except (ValueError, OSError):

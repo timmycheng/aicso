@@ -2,8 +2,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
-from typing import Optional
+from dataclasses import dataclass
 
 from fastapi import Request
 
@@ -28,7 +27,7 @@ class AppState:
     context_manager: ContextManager
     approval_engine: ApprovalEngine
     orchestrator: Orchestrator
-    datasource_manager: Optional[DataSourceManager] = None
+    datasource_manager: DataSourceManager | None = None
 
 
 async def _restore_aggregation_rules(state: AppState) -> None:

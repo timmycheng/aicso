@@ -1,8 +1,8 @@
 """事件总线测试"""
-import pytest
-import asyncio
 
-from aicso.core.event_bus import EventBus, Event, EventType
+import pytest
+
+from aicso.core.event_bus import Event, EventBus, EventType
 
 
 class TestEventBus:

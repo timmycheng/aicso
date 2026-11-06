@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -60,7 +59,7 @@ class PlaybookRun(BaseModel):
     status: RunStatus = RunStatus.PENDING
     steps_status: dict = Field(default_factory=dict)
     approval_status: ApprovalStatus = ApprovalStatus.PENDING
-    approved_by: Optional[str] = None
-    started_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
+    approved_by: str | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
     result: dict = Field(default_factory=dict)

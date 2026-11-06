@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 
-from aicso.agents.base import BaseAgent, AgentResult
+from aicso.agents.base import AgentResult, BaseAgent
 
 
 class ResponseAgent(BaseAgent):
@@ -45,16 +45,27 @@ class ResponseAgent(BaseAgent):
         investigation_result = context.get("investigation_result", {})
         case = context.get("case", {})
 
+        def _field(name: str) -> str:
+            return (
+                case.get(name, "N/A") if isinstance(case, dict) else getattr(case, name, "N/A")
+            )
+
+        investigation_json = (
+            json.dumps(investigation_result, ensure_ascii=False, default=str)
+            if investigation_result
+            else "无调查结果"
+        )
+
         messages = [
             {"role": "system", "content": self._build_system_prompt()},
             {"role": "user", "content": f"""请根据调查结果制定响应方案：
 
 ## Case信息
-- 标题: {case.get('title', 'N/A') if isinstance(case, dict) else getattr(case, 'title', 'N/A')}
-- 严重级别: {case.get('severity', 'N/A') if isinstance(case, dict) else getattr(case, 'severity', 'N/A')}
+- 标题: {_field('title')}
+- 严重级别: {_field('severity')}
 
 ## 调查结果
-{json.dumps(investigation_result, ensure_ascii=False, default=str) if investigation_result else '无调查结果'}
+{investigation_json}
 
 请给出响应方案（JSON格式）。"""},
         ]

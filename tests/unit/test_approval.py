@@ -1,9 +1,9 @@
 """审批引擎测试"""
-import pytest
 import asyncio
 
-from aicso.core.approval import ApprovalEngine, ApprovalResult, ApprovalStatus, RiskLevel
-from aicso.core.event_bus import EventBus
+import pytest
+
+from aicso.core.approval import ApprovalEngine, RiskLevel
 
 
 class TestApprovalEngine:

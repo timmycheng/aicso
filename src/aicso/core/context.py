@@ -2,16 +2,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
 
 import structlog
 
-from aicso.models.case import Case
-from aicso.models.alert import Alert
-from aicso.models.asset import Asset
-from aicso.models.ioc import IoC
-from aicso.store.case_store import CaseStore
 from aicso.store.alert_store import AlertStore
+from aicso.store.case_store import CaseStore
 from aicso.store.vector_store import VectorStore
 
 logger = structlog.get_logger()
@@ -49,7 +44,7 @@ class ContextManager:
         self,
         case_store: CaseStore,
         alert_store: AlertStore,
-        vector_store: Optional[VectorStore] = None,
+        vector_store: VectorStore | None = None,
     ):
         self.case_store = case_store
         self.alert_store = alert_store
