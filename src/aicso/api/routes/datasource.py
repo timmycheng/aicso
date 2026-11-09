@@ -58,3 +58,32 @@ async def api_datasource_status(state: AppState = Depends(get_state)):
     if not state.datasource_manager:
         return {"datasources": [], "message": "数据源管理器未启动"}
     return {"datasources": state.datasource_manager.list_status()}
+
+
+# --- 映射试算（issue #35 易用性：样例消息→归一化预览） ---
+
+@router.post("/api/test-mapping")
+async def api_test_mapping(request: Request):
+    """schema映射试算：粘贴样例消息，预览归一化结果与警告清单"""
+    from aicso.mapping.engine import SchemaMapper, generated_alert_id
+
+    body = await request.json()
+    sample = body.get("sample", "")
+    mapper_config = body.get("config", {}) or {}
+    if not sample.strip():
+        return {"error": "sample必填：粘贴一条样例消息JSON"}
+
+    mapper = SchemaMapper(mapper_config, default_source="preview")
+    events = mapper.expand_message(sample)
+    results = []
+    for e in events:
+        alert, warnings = mapper.normalize(e, fallback_alert_id=generated_alert_id("preview"))
+        results.append({
+            "alert": alert.model_dump(mode="json"),
+            "warnings": warnings,
+        })
+    return {
+        "events": len(events),
+        "results": results,
+        "detected_schema": mapper._detected or mapper.schema,
+    }

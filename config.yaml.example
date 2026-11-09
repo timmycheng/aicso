@@ -81,7 +81,20 @@ routing:
 # 数据源配置
 datasources:
   # 示例：Kafka消费（内网SIEM常用）
+  # schema映射（issue #35）：
+  #   schema: auto（默认）= 首条消息自动探测，ECS格式(含@timestamp+source.ip)零映射接入
+  #   schema: ecs         = 显式Elastic ECS 8.x
+  #   不配schema + field_mapping = 旧自定义路径（完全向后兼容）
+  # siem_kafka_ecs:
+  #   type: kafka
+  #   poll_interval: 1
+  #   config:
+  #     bootstrap_servers: 10.0.0.1:9092
+  #     topic: siem-alerts
+  #     group_id: aicso-consumer
+  #     schema: ecs                  # ECS源零映射
   # siem_kafka:
+  #   ...以下为自定义映射示例...
   #   type: kafka
   #   enabled: true
   #   description: "态势感知平台Kafka告警源"
