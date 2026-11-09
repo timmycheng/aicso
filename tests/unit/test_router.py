@@ -119,7 +119,18 @@ class TestEntityExtraction:
         assert "ip:1.2.3.4" in keys
         assert "ip:10.0.0.1" in keys
         assert "pair:1.2.3.4>10.0.0.1" in keys
-        assert "rule:rule-9" in keys
+        # rule_id 不参与候选生成：同规则=同类攻击≠同一事件（issue #31）
+        assert not any(k.startswith("rule:") for k in keys)
+
+    def test_same_rule_disjoint_ips_no_candidates(self):
+        """核心回归：仅同rule_id、IP不相交 → 不应产生候选（issue #31）"""
+        index = CaseRoutingIndex()
+        index.add_case("C1", "SQL注入事件", entity_keys_of(
+            make_alert(alert_id="A-1", src="10.0.0.210", dst="10.0.1.203", rule_id="r-sqli")))
+        # 同规则、IP完全不同的新告警
+        keys = entity_keys_of(make_alert(
+            alert_id="A-2", src="10.0.1.105", dst="172.16.1.187", rule_id="r-sqli"))
+        assert index.candidates(keys) == []
 
     def test_partial(self):
         keys = entity_keys_of(make_alert(src="1.2.3.4", dst=None))
@@ -168,11 +179,11 @@ class TestCaseRoutingIndex:
             {"case_id": "C1", "summary": "T1", "src_ip": "1.2.3.4", "dst_ip": "10.0.0.1",
              "rule_id": None, "last_seen": datetime.utcnow(), "hits": 3},
             {"case_id": "C2", "summary": "T2", "src_ip": "5.6.7.8", "dst_ip": None,
-             "rule_id": "r2", "last_seen": datetime.utcnow(), "hits": 1},
+             "rule_id": None, "last_seen": datetime.utcnow(), "hits": 1},
         ])
         assert count == 2
         assert len(index.candidates(["ip:1.2.3.4"])) == 1
-        assert len(index.candidates(["rule:r2"])) == 1
+        assert len(index.candidates(["ip:5.6.7.8"])) == 1
 
 
 # ---------------- 本地兜底 ----------------

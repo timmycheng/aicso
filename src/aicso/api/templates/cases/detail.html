@@ -133,6 +133,9 @@
                 {% if detail.alert_id %}
                     <div class="mono">{{ detail.alert_id }} {{ detail.rule_name or '' }}
                     {% if detail.src_ip %}{{ detail.src_ip }} → {{ detail.dst_ip }}{% endif %}</div>
+                    {% if detail.shared_entities %}
+                    <div class="muted">汇入依据: {{ detail.shared_entities | join(', ') | replace('pair:', '') | replace('ip:', '') | replace('>', '→') }}</div>
+                    {% endif %}
                 {% endif %}
                 {% if detail.summary %}<div>{{ detail.summary }}</div>{% endif %}
                 {% if detail.severity_confidence is defined and detail.severity_confidence is not none %}

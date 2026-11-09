@@ -25,7 +25,13 @@ def _parse_ts(value) -> datetime | None:
 
 
 def entity_keys_of(alert: Alert) -> list[str]:
-    """从告警提取实体键（倒排索引的key）"""
+    """从告警提取实体键（倒排索引的key）
+
+    仅收录 IP/对端实体——"同一事件"的本地强信号。
+    rule_id 不参与候选生成：同一检测规则全网多目标触发是SIEM常态，
+    仅同规则意味着"同类攻击"而非"同一事件"（issue #31）；
+    rule_id 仍保留在 entity_signature 中供决策缓存使用。
+    """
     keys: list[str] = []
     if alert.src_ip:
         keys.append(f"ip:{alert.src_ip}")
@@ -33,8 +39,6 @@ def entity_keys_of(alert: Alert) -> list[str]:
         keys.append(f"ip:{alert.dst_ip}")
     if alert.src_ip and alert.dst_ip:
         keys.append(f"pair:{alert.src_ip}>{alert.dst_ip}")
-    if alert.rule_id:
-        keys.append(f"rule:{alert.rule_id}")
     return keys
 
 
@@ -93,6 +97,11 @@ class CaseRoutingIndex:
         """Case是否在索引中活跃（路由防御检查用，避免每路由一次SELECT）"""
         return case_id in self._slots
 
+    def case_entities(self, case_id: str) -> set[str]:
+        """目标Case当前的实体集（汇入依据审计用）"""
+        slot = self._slots.get(case_id)
+        return set(slot.entity_keys) if slot else set()
+
     def entity_map(self) -> dict[str, set[str]]:
         """实体倒排视图（合并候选发现用），返回副本"""
         return {key: set(cids) for key, cids in self._entity_map.items()}
@@ -131,6 +140,7 @@ class CaseRoutingIndex:
         self._entity_map.clear()
         for row in rows:
             case_id = row["case_id"]
+            # 与 entity_keys_of 一致：仅IP/对端实体参与候选（issue #31）
             entities = []
             if row.get("src_ip"):
                 entities.append(f"ip:{row['src_ip']}")
@@ -138,8 +148,6 @@ class CaseRoutingIndex:
                 entities.append(f"ip:{row['dst_ip']}")
             if row.get("src_ip") and row.get("dst_ip"):
                 entities.append(f"pair:{row['src_ip']}>{row['dst_ip']}")
-            if row.get("rule_id"):
-                entities.append(f"rule:{row['rule_id']}")
 
             existing = self._slots.get(case_id)
             if existing is not None:

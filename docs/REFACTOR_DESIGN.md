@@ -101,6 +101,9 @@ Case 上下文由四类只追加（append-only）的内容构成：
 alert ──→ ①候选生成（纯本地，0成本，~µs级）
              实体倒排索引: entity_key ─→ [活跃Case槽位]
              按 (共享实体数, 最近活跃) 打分取 top-K（K≤10）
+             ⚠ 实体仅含 源IP/目标IP/pair——rule_id 不参与候选生成：
+               同一检测规则全网多目标触发是SIEM常态，仅同规则=同类攻击
+               而非同一事件（issue #31）；rule_id 仅保留在决策缓存签名
           ↓
           ②System One 判定（一次API调用，微批内并行多问题）
              state    = 告警紧凑摘要（~300 token 内）
