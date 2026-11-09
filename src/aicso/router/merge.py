@@ -169,6 +169,8 @@ class MergeSplitEngine:
             "reason": reason,
         })
         await self.case_store.update_relation(absorbed_id, merged_into=primary_id)
+        # 交互频次操作：flush保证重定向立即可读（幂等键依赖该字段）
+        await self.case_store.db.flush()
 
         # 路由状态清理：被并Case退出候选（重启重建由merged_into过滤兜底）
         self.index.deactivate(absorbed_id)
@@ -218,6 +220,9 @@ class MergeSplitEngine:
         new_case.record_case_created(source=f"split_from_{case_id}")
         await self.case_store.create(new_case)
         await self.case_store.update_relation(new_case.case_id, split_from=case_id)
+        # flush：新Case行必须先于 move_alerts 的FK直写可见
+        # （仿真抓到：写缓冲未落库时直写UPDATE触发FOREIGN KEY违约）
+        await self.case_store.db.flush()
 
         moved = await self.alert_store.move_alerts(case_id, new_case.case_id, alert_ids)
         moved_ids = [r["alert_id"] for r in rows]
