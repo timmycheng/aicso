@@ -8,6 +8,8 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # 防挂护栏：pytest残留任务曾致进程不退出，runner白等6小时上限
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 

@@ -54,6 +54,7 @@ dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
     "pytest-cov>=5.0.0",
+    "pytest-timeout>=2.3.0",
     "ruff>=0.4.0",
     "mypy>=1.10.0",
 ]
@@ -77,3 +78,6 @@ ignore = ["UP042"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# 单测试线程级超时（秒）：挂死的测试单独失败，不拖垮整个run
+timeout = 120
+timeout_method = "thread"
