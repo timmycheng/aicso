@@ -230,13 +230,20 @@ class RouterEngine:
 
         for i, (alert, candidates) in enumerate(pending):
             name = f"alert_{i}"
-            criteria = {slot.case_id: slot.to_summary() for slot in candidates}
-            criteria["__new__"] = "与现有事件均无关，应新建独立事件"
+            # 判定证据：候选Case附实体摘要（源/目标IP），让模型有据可判
+            # 而非仅凭同名标题（issue #31）
+            criteria = {}
+            for slot in candidates:
+                evidence = _entity_evidence(slot.entity_keys)
+                criteria[slot.case_id] = f"{slot.to_summary()}｜实体: {evidence}"
+            criteria["__new__"] = "与现有事件均无实体关联，应新建独立事件"
             criteria_map[name] = list(criteria.keys())
             questions[name] = Choice(
                 instructions=(
-                    f"这是第{i + 1}条安全告警。它应汇入哪个已有的安全事件(Case)？"
-                    "若与所有已有事件均无关，选 __new__。"
+                    f"这是第{i + 1}条安全告警。判断它应汇入哪个已有的安全事件(Case)。"
+                    "判定依据：告警的源/目标IP与候选事件实体是否重叠、是否明显属于同一攻击链。"
+                    "注意：仅攻击类型或规则名相同不是合并理由——不同源不同目标的同类攻击应新建独立事件。"
+                    "若所有候选均无实体关联，选 __new__。"
                 ),
                 criteria=criteria,
             )
@@ -297,12 +304,18 @@ class RouterEngine:
                     ),
                 ))
             else:
+                # 汇入依据：与所选Case重叠的实体（审计可见，回应"原因不足"）
+                shared = sorted(
+                    set(entity_keys_of(alert))
+                    & next((s.entity_keys for s in candidates if s.case_id == choice), set())
+                )
                 decision = RoutingDecision(
                     alert_id=alert.alert_id, case_id=choice,
                     decision=ROUTE_TO, source=SRC_SYSTEM_ONE,
                     confidence=confidence,
                     latency_ms=(time.monotonic() - started_all) * 1000,
                     candidates=len(candidates),
+                    detail={"shared_entities": shared},
                 )
                 self._cache_store(alert, choice)
                 decisions.append(await self._apply_route(alert, choice, decision))
@@ -364,6 +377,9 @@ class RouterEngine:
         await self.alert_store.mark_routed(
             alert.alert_id, case_id, decision.source
         )
+        # 汇入依据统一在此计算：与目标Case重叠的实体（覆盖三种来源，
+        # issue #31——让"为什么汇入"在时间线上可审计）
+        shared = sorted(set(entity_keys) & self.index.case_entities(case_id))
         event = CaseEvent(
             event_id=f"{case_id}-evt-{str(ULID())}",
             event_type=CaseEventType.ALERT_ADDED,
@@ -379,6 +395,7 @@ class RouterEngine:
                     f"分流汇入: {decision.source}"
                     + (f" (confidence={decision.confidence:.2f})" if decision.confidence else "")
                 ),
+                "shared_entities": shared,
             },
         )
         await self.case_store.add_event(case_id, event)
@@ -590,6 +607,17 @@ class RouterEngine:
             f"严重度 {alert.severity or '-'}",
         ]
         return " | ".join(parts)
+
+
+def _entity_evidence(entity_keys: set[str], limit: int = 6) -> str:
+    """实体键转人读摘要（System One判定证据）"""
+    items = []
+    for key in sorted(entity_keys)[:limit]:
+        if key.startswith("pair:"):
+            items.append(key[5:].replace(">", "→"))
+        elif key.startswith("ip:"):
+            items.append(key[3:])
+    return ", ".join(items) or "无记录"
 
 
 def _log_store_error(task: asyncio.Task) -> None:
