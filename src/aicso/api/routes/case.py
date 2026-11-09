@@ -12,6 +12,7 @@ from fastapi.templating import Jinja2Templates
 
 from aicso.api.deps import AppState, get_state
 from aicso.models.case import (
+    CASE_TRANSITIONS,
     EVENT_TYPE_COLORS,
     EVENT_TYPE_ICONS,
     EVENT_TYPE_LABELS,
@@ -107,6 +108,10 @@ async def case_detail(
             except (json.JSONDecodeError, TypeError):
                 event["detail"] = {}
 
+    # 状态机合法转换目标（表单下拉只渲染可达状态，防非法转换500）
+    allowed_statuses = [
+        s.value for s in CASE_TRANSITIONS.get(CaseStatus(case["status"]), [])
+    ]
     # metadata从DB读回是JSON字符串，解析为dict供模板渲染路由信息
     meta = case.get("metadata", "{}")
     if isinstance(meta, str):
@@ -120,7 +125,8 @@ async def case_detail(
         "cases/detail.html",
         {
             "case": case, "alerts": alerts, "events": events,
-            "meta": meta,
+            "meta": meta, "allowed_statuses": allowed_statuses,
+            "error": request.query_params.get("error"),
             "event_labels": EVENT_TYPE_LABELS,
             "event_icons": EVENT_TYPE_ICONS,
             "event_colors": EVENT_TYPE_COLORS,
@@ -155,7 +161,14 @@ async def case_update(
 
     if status:
         new_status = CaseStatus(status)
-        event = case.transition_to(new_status, actor="web_user", reason="Web界面更新")
+        try:
+            event = case.transition_to(new_status, actor="web_user", reason="Web界面更新")
+        except ValueError as e:
+            # 非法状态转换：回详情页带错误提示，而非500
+            from urllib.parse import quote
+            return RedirectResponse(
+                url=f"/cases/{case_id}?error={quote(str(e))}", status_code=303
+            )
         events_to_save.append(event)
 
     if assignee is not None:

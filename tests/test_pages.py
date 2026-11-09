@@ -83,3 +83,44 @@ async def test_case_ops_and_context_api_still_work():
             ctx = r.json()
             assert ctx["entities"] and len(ctx["ops_records"]) == 1
             assert "ops_executed" in [e["event_type"] for e in ctx["timeline"]]
+
+
+async def test_update_form_invalid_transition_redirects_not_500():
+    """GUI走查发现的bug回归：非法状态转换应303+错误提示，而非500"""
+    case_id, _ = await seed_detail_targets()
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with app.router.lifespan_context(app):
+            # new → investigating 非法（必须先 assigned）
+            r = await client.post(f"/cases/{case_id}/update", data={
+                "status": "investigating", "assignee": "", "resolution": ""})
+            assert r.status_code == 303, f"应303重定向，实际{r.status_code}"
+            assert f"/cases/{case_id}?error=" in r.headers["location"]
+
+            # 详情页带error参数渲染错误banner
+            r2 = await client.get(r.headers["location"])
+            assert r2.status_code == 200
+            assert "banner danger" in r2.text
+
+            # 下拉只渲染合法转换目标（new→只有assigned）
+            assert 'value="assigned"' in r2.text
+            assert 'value="investigating"' not in r2.text.split("</select>")[0]
+
+
+async def test_mock_generate_filters_invalid_categories():
+    """GUI走查发现的bug回归：非法攻击类别应过滤而非500"""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with app.router.lifespan_context(app):
+            r = await client.post("/mock/generate", data={
+                "count": "3", "inject": "true",
+                "categories": "hacking_the_planet",  # 非法类别
+            })
+            assert r.status_code == 200, f"非法类别应被过滤，实际{r.status_code}"
+
+            # 合法+非法混合：只按合法类别生成
+            r2 = await client.post("/mock/generate", data={
+                "count": "3", "inject": "true",
+                "categories": "brute_force,brute_force",  # 逗号连体（浏览器异常编码）
+            })
+            assert r2.status_code == 200

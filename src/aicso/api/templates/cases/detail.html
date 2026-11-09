@@ -9,6 +9,9 @@
 {% endblock %}
 
 {% block content %}
+{% if error %}
+<div class="banner danger">{{ error }}</div>
+{% endif %}
 {% if case.merged_into %}
 <div class="banner warn">此 Case 已合并至
     <a href="/cases/{{ case.merged_into }}"><span class="mono">{{ case.merged_into }}</span></a>，
@@ -61,10 +64,11 @@
                     <label>状态</label>
                     <select name="status">
                         <option value="">不变更</option>
-                        {% for s, label in [('new','新建'),('assigned','已指派'),('investigating','调查中'),('responding','响应中'),('resolved','已解决'),('closed','已关闭')] %}
-                        <option value="{{ s }}">{{ label }}</option>
+                        {% for s in allowed_statuses %}
+                        <option value="{{ s }}">{{ {'new':'新建','assigned':'已指派','investigating':'调查中','responding':'响应中','resolved':'已解决','closed':'已关闭'}[s] }}</option>
                         {% endfor %}
                     </select>
+                    {% if not allowed_statuses %}<div class="help">当前状态无后续流转（终态）</div>{% endif %}
                 </div>
                 <div class="field">
                     <label>负责人</label>
