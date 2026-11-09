@@ -1,14 +1,12 @@
 """Kafka适配器 - 从Kafka Topic消费告警"""
 from __future__ import annotations
 
-import json
-import uuid
 from datetime import datetime
 
 import structlog
 
 from aicso.adapters.base import DataSourceAdapter
-from aicso.adapters.rest_api import _get_nested
+from aicso.mapping.engine import SchemaMapper, generated_alert_id
 from aicso.models.alert import Alert
 
 logger = structlog.get_logger()
@@ -61,10 +59,12 @@ class KafkaAdapter(DataSourceAdapter):
         self._consumer = None
         self._config: dict = {}
         self._connected = False
+        self._mapper = SchemaMapper({}, default_source="kafka")
 
     async def connect(self, config: dict) -> bool:
         """连接Kafka"""
         self._config = config
+        self._mapper = SchemaMapper(config, default_source="kafka")
         try:
             from aiokafka import AIOKafkaConsumer
 
@@ -119,20 +119,16 @@ class KafkaAdapter(DataSourceAdapter):
 
         alerts = []
         try:
-            # getmany批量消费
+            # getmany批量消费；单条消息经统一映射引擎展开（信封/数组）
             data = await self._consumer.getmany(timeout_ms=poll_timeout, max_records=max_batch)
 
             for tp, messages in data.items():
                 for msg in messages:
                     raw_text = msg.value
-                    try:
-                        if message_format == "json":
-                            parsed = json.loads(raw_text)
-                            alerts.append(parsed)
-                        else:
-                            alerts.append({"raw": raw_text})
-                    except json.JSONDecodeError:
-                        alerts.append({"raw": raw_text})
+                    if message_format == "json":
+                        alerts.extend(self._mapper.expand_message(raw_text))
+                    else:
+                        alerts.append({"__raw__": raw_text})
 
         except Exception as e:
             logger.error("kafka.poll_failed", error=str(e))
@@ -140,84 +136,13 @@ class KafkaAdapter(DataSourceAdapter):
         return alerts
 
     async def normalize(self, raw: dict) -> Alert:
-        """将Kafka消息映射为标准Alert"""
-        # 如果是raw格式，直接包装
-        if "raw" in raw and len(raw) == 1:
-            return Alert(
-                alert_id=f"kafka-{uuid.uuid4().hex[:8]}",
-                source="kafka",
-                raw_log=raw["raw"],
-            )
-
-        # 使用field_mapping映射（与REST API适配器逻辑一致）
-        mapping = self._config.get("field_mapping", {})
-        severity_map = self._config.get("severity_mapping", {})
-
-        alert_id = _get_nested(
-            raw, mapping.get("alert_id", "alert_id"), f"kafka-{uuid.uuid4().hex[:8]}"
+        """统一映射引擎归一化（schema: auto|ecs|generic + field_mapping覆盖）"""
+        alert, warnings = self._mapper.normalize(
+            raw, fallback_alert_id=generated_alert_id("kafka")
         )
-        source = _get_nested(raw, mapping.get("source", "source"), "kafka")
-        rule_id = str(_get_nested(raw, mapping.get("rule_id", "rule_id"), ""))
-        rule_name = _get_nested(raw, mapping.get("rule_name", "rule_name"), "")
-        raw_severity = _get_nested(raw, mapping.get("severity", "severity"), "medium")
-        src_ip = _get_nested(raw, mapping.get("src_ip", "src_ip"))
-        dst_ip = _get_nested(raw, mapping.get("dst_ip", "dst_ip"))
-        src_port = _get_nested(raw, mapping.get("src_port", "src_port"))
-        dst_port = _get_nested(raw, mapping.get("dst_port", "dst_port"))
-        protocol = _get_nested(raw, mapping.get("protocol", "protocol"))
-        raw_log = _get_nested(raw, mapping.get("raw_log", "raw_log"))
-        timestamp_raw = _get_nested(raw, mapping.get("timestamp", "timestamp"))
-
-        # 严重级别映射
-        severity = "medium"
-        if isinstance(raw_severity, int) or (
-            isinstance(raw_severity, str) and str(raw_severity).isdigit()
-        ):
-            severity = severity_map.get(
-                int(raw_severity), severity_map.get(str(raw_severity), "medium")
-            )
-        elif isinstance(raw_severity, str):
-            severity = raw_severity.lower()
-            if severity not in ("critical", "high", "medium", "low", "info"):
-                severity = "medium"
-
-        # 时间解析
-        timestamp = datetime.utcnow()
-        if timestamp_raw:
-            try:
-                if isinstance(timestamp_raw, (int, float)):
-                    ts_value = timestamp_raw / 1000 if timestamp_raw > 1e12 else timestamp_raw
-                    timestamp = datetime.fromtimestamp(ts_value)
-                else:
-                    timestamp = datetime.fromisoformat(str(timestamp_raw).replace("Z", "+00:00"))
-            except (ValueError, OSError):
-                pass
-
-        # 端口类型转换
-        try:
-            src_port = int(src_port) if src_port else None
-        except (ValueError, TypeError):
-            src_port = None
-        try:
-            dst_port = int(dst_port) if dst_port else None
-        except (ValueError, TypeError):
-            dst_port = None
-
-        return Alert(
-            alert_id=str(alert_id),
-            source=str(source),
-            rule_id=str(rule_id) if rule_id else None,
-            rule_name=str(rule_name) if rule_name else None,
-            severity=severity,
-            timestamp=timestamp,
-            src_ip=str(src_ip) if src_ip else None,
-            dst_ip=str(dst_ip) if dst_ip else None,
-            src_port=src_port,
-            dst_port=dst_port,
-            protocol=str(protocol) if protocol else None,
-            raw_log=str(raw_log) if raw_log else None,
-            enriched_data=raw,
-        )
+        for w in warnings:
+            logger.warning("kafka.normalize_warning", alert_id=alert.alert_id, warning=w)
+        return alert
 
     async def close(self):
         """关闭消费者"""
