@@ -74,9 +74,11 @@ async def mock_generate(
         for ecs in ecs_alerts:
             await orch.handle_alert(ecs_to_alert(ecs))
             injected += 1
-        # 同步排空路由队列，保证返回时结果确定
+        # 同步排空路由队列+写缓冲，保证响应所报结果立即可查
+        # （CI曾暴露：0.1s缓冲窗口内紧接的列表查询读到0行）
         await state.router.flush()
         cases_created = state.router.metrics.cases_created_total - before
+        await state.db.flush()
 
     preview_alerts = []
     for ecs in ecs_alerts[:5]:
@@ -141,9 +143,11 @@ async def api_mock_generate(
         for ecs in ecs_alerts:
             await orch.handle_alert(ecs_to_alert(ecs))
             injected += 1
-        # 同步排空路由队列，保证返回时结果确定
+        # 同步排空路由队列+写缓冲，保证响应所报结果立即可查
+        # （CI曾暴露：0.1s缓冲窗口内紧接的列表查询读到0行）
         await state.router.flush()
         cases_created = state.router.metrics.cases_created_total - before
+        await state.db.flush()
 
     return {
         "generated": len(ecs_alerts),
