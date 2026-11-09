@@ -52,9 +52,11 @@ async def mock_generate(
     inject: bool = Form(default=False),
     state: AppState = Depends(get_state),
 ):
+    # 类别健壮性：过滤非法值（透传未知类别会KeyError 500）
+    valid_categories = [c for c in categories if c in CATEGORIES]
     ecs_alerts = generate_mock_alerts(
         count=count,
-        categories=categories if categories else None,
+        categories=valid_categories or None,
     )
 
     injected = 0
@@ -117,9 +119,11 @@ async def api_mock_generate(
     categories = body.get("categories", [])
     inject = body.get("inject", False)
 
+    # 类别健壮性：过滤非法值（透传未知类别会KeyError 500）
+    valid_categories = [c for c in categories if c in CATEGORIES]
     ecs_alerts = generate_mock_alerts(
         count=count,
-        categories=categories if categories else None,
+        categories=valid_categories or None,
     )
 
     injected = 0
