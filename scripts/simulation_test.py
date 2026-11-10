@@ -87,7 +87,8 @@ class ScriptedClient:
         pass
 
 
-async def make_sim_engine(db_path: str, client=None, queue_max: int = 50000):
+async def make_sim_engine(db_path: str, client=None, queue_max: int = 50000,
+                          batch_max_alerts: int = 50):
     db = Database(db_path)
     await db.connect()
     await db.init_tables()
@@ -97,7 +98,7 @@ async def make_sim_engine(db_path: str, client=None, queue_max: int = 50000):
         alert_store=AlertStore(db),
         routing_store=RoutingDecisionStore(db),
         system_one_config=SystemOneConfig(enabled=True, batch_window_ms=100,
-                                          batch_max_alerts=50),
+                                          batch_max_alerts=batch_max_alerts),
         routing_config=RoutingConfig(queue_max_size=queue_max),
         client=client,
     )
@@ -522,25 +523,31 @@ class ScenarioStream:
 
 async def suite_dataset(streams: list[ScenarioStream], field_mapping: dict | None = None,
                         schema: str = "generic", rate: float = 0.0,
-                        max_records: int = 0) -> tuple[list[SimResult], dict]:
+                        max_records: int = 0, client=None,
+                        batch_max_alerts: int = 50) -> tuple[list[SimResult], dict]:
     """真实数据集回放有效性矩阵（issue #40）
 
     数据形状即真值：每个数据集文件=一个攻击场景或良性噪声流，断言：
       1. 单场景收敛：带IP告警的case数 ≤ 去重(src,dst)对数（本地pair窗内结构下界）
       2. 跨场景零串流：任何case不得同时含两个场景的告警
       3. 良性零误并：良性告警不得进入含攻击告警的case
-    语义级收敛增益（模型裁决汇入）属真实SIEM调优范畴，记分卡输出、不强断言。
+    client=None 走 local 兜底（确定性）；传 SystemOneClient 走模型裁决
+    （语义判定"是否同一事件"，记分卡输出决策来源与API用量）。
+    batch_max_alerts: 微批上限——真实数据的候选上下文远大于合成告警，
+    大批次会超模型上下文（65536）触发422降级，需按 token 预算调小。
 
     rate: 每秒回放条数（0=尽快）。路由pair窗与索引last_seen按摄入时钟计
     （router/fallback.py PAIR_WINDOW_MINUTES=10），低速回放会真实产生更多
     独立case——收敛断言仅在窗内速率下有意义。
     """
-    print(f"\n── 真实数据集回放矩阵 · local 模式（{len(streams)}场景） ──")
+    mode = "systemone" if client is not None else "local"
+    print(f"\n── 真实数据集回放矩阵 · {mode} 模式（{len(streams)}场景） ──")
     out: list[SimResult] = []
     tmp = tempfile.mkdtemp(prefix="sim-ds-")
     prior_log_config = structlog.get_config()
     structlog.configure(wrapper_class=structlog.make_filtering_bound_logger(logging.WARNING))
-    engine, db = await make_sim_engine(os.path.join(tmp, "d.db"))
+    engine, db = await make_sim_engine(os.path.join(tmp, "d.db"), client=client,
+                                       batch_max_alerts=batch_max_alerts)
 
     def mapper_for(stream: ScenarioStream) -> SchemaMapper:
         mapping = stream.field_mapping if stream.field_mapping is not None \
@@ -588,11 +595,24 @@ async def suite_dataset(streams: list[ScenarioStream], field_mapping: dict | Non
         scenario_pairs[stream.name] = pairs
         if max_records and total >= max_records:
             break
-    await engine.flush()
+    # 排空路由队列：local 一次flush即净；systemone 需轮询等模型裁决完成
+    all_decisions = []
+    deadline = time.monotonic() + (300 if client is not None else 10)
+    while True:
+        all_decisions.extend(await engine.flush())
+        if engine.metrics.routed_total >= total or time.monotonic() > deadline:
+            break
+        await asyncio.sleep(0.05)
     await engine.alert_store.db.flush()   # 读己之写
 
     elapsed = time.monotonic() - start
     throughput = total / elapsed if elapsed else 0
+
+    decision_sources: dict[str, int] = {}
+    for d in all_decisions:
+        key = f"{d.source}:{d.decision}"
+        decision_sources[key] = decision_sources.get(key, 0) + 1
+    m = engine.metrics
 
     case_of: dict[str, str] = {}
     for alert_id in alert_scenario:
@@ -654,17 +674,24 @@ async def suite_dataset(streams: list[ScenarioStream], field_mapping: dict | Non
                      f"误并{len(benign_leak)}条" if benign_leak else ""))
 
     print("  场景记分卡:")
-    for name, m in per_scenario.items():
-        conv = m["ip_alerts"] / m["ip_cases"] if m["ip_cases"] else 0.0
-        print(f"    {name}[{m['kind']}] 告警{m['alerts']}(带IP{m['ip_alerts']})"
-              f" → case {m['cases']}(带IP{m['ip_cases']})"
-              f" 去重对{m['pairs']} 收敛比{conv:.1f}")
+    for name, mm in per_scenario.items():
+        conv = mm["ip_alerts"] / mm["ip_cases"] if mm["ip_cases"] else 0.0
+        print(f"    {name}[{mm['kind']}] 告警{mm['alerts']}(带IP{mm['ip_alerts']})"
+              f" → case {mm['cases']}(带IP{mm['ip_cases']})"
+              f" 去重对{mm['pairs']} 收敛比{conv:.1f}")
     print(f"  吞吐 {throughput:.0f}/s 映射警告{warn_count}条 用时{elapsed:.1f}s"
           f"（串流case {len(leaks)}个）")
+    if client is not None:
+        cost = m.systemone_tokens_total * 0.042 / 1_000_000
+        print(f"  决策来源: {decision_sources}")
+        print(f"  模型用量: {m.systemone_requests_total}请求"
+              f" {m.systemone_tokens_total}token ≈¥{cost:.4f}"
+              f" 降级={'是' if engine._degraded else '否'}")
 
     metrics_summary = {"total": total, "throughput": round(throughput),
                        "mapping_warnings": warn_count, "scenarios": per_scenario,
-                       "elapsed_s": round(elapsed, 1)}
+                       "elapsed_s": round(elapsed, 1), "decision_sources": decision_sources,
+                       "drained": m.routed_total >= total}
     await asyncio.sleep(0.2)
     await db.flush_and_close()
     structlog.configure(**prior_log_config)
