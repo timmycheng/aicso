@@ -33,7 +33,7 @@ uv lock --quiet
 
 # 2. 导出 requirements.txt（无哈希，给 pip 离线用）
 echo "[2/5] 导出 requirements.txt ..."
-uv export --no-hashes --no-header -o requirements_offline.txt
+uv export --no-hashes --no-header --extra kafka -o requirements_offline.txt
 # 移除 -e . 行（pip download 不支持 editable）
 grep -v '^[-]e \.$' requirements_offline.txt > requirements_offline.tmp
 mv requirements_offline.tmp requirements_offline.txt
@@ -109,7 +109,8 @@ pack() {
     cp -r playbooks "$BUILD_DIR/" 2>/dev/null || mkdir -p "$BUILD_DIR/playbooks"
     cp -r skills "$BUILD_DIR/" 2>/dev/null || mkdir -p "$BUILD_DIR/skills"
     cp -r tests "$BUILD_DIR/" 2>/dev/null || mkdir -p "$BUILD_DIR/tests"
-    cp LICENSE "$BUILD_DIR/" 2>/dev/null || true
+    cp -r docs "$BUILD_DIR/" 2>/dev/null || true
+    cp LICENSE README.md "$BUILD_DIR/" 2>/dev/null || true
 
     # 复制 wheel 包
     cp -r "$pkgs_dir" "$BUILD_DIR/offline_pkgs"
@@ -151,7 +152,7 @@ pip install --no-index --find-links=offline_pkgs/ -r requirements.txt -q
 
 # 安装项目本身
 echo "安装 AiCSO ..."
-pip install -e . -q
+pip install -e ".[kafka]" -q
 
 # 生成配置文件
 if [ ! -f config.yaml ]; then
@@ -190,7 +191,7 @@ pip install --no-index --find-links=offline_pkgs\ -r requirements.txt -q
 
 :: 安装项目本身
 echo 安装 AiCSO ...
-pip install -e . -q
+pip install -e ".[kafka]" -q
 
 :: 生成配置文件
 if not exist config.yaml (
