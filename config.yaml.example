@@ -120,6 +120,12 @@ datasources:
   #       4: low
   #       5: info
 
+  # ⚠ 消费组规范：group_id 必须独立于其他服务——同组消费会互抢分区
+  # 导致双方都丢消息；不同 group_id 各自独立拿全量流互不影响。
+  # 位点语义（at-least-once）：批次告警全部持久化成功后才提交offset；
+  # 崩溃/系统级失败不提交→重启重投，重复投递由 alert_id 主键幂等吸收。
+  # since 参数对 Kafka 无效（起点由 group_id + auto_offset_reset 决定）。
+
   # 示例：REST API（SIEM HTTP接口）
   # siem_api:
   #   type: rest_api

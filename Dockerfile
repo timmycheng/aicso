@@ -20,7 +20,7 @@ COPY pyproject.toml README.md LICENSE ./
 COPY src/ src/
 
 # Install Python dependencies
-RUN pip install --no-cache-dir -e .
+RUN pip install --no-cache-dir -e ".[kafka]"
 
 # Copy config, playbooks and skills
 COPY config.yaml.example config.yaml

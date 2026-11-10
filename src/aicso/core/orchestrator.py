@@ -118,7 +118,11 @@ class Orchestrator:
         logger.info("orchestrator.handle_alert", alert_id=alert.alert_id, source=alert.source)
 
         # 1. 存储告警（先持久化后路由，路由延迟不丢数据）
-        await self.alert_store.create(alert)
+        inserted = await self.alert_store.create(alert)
+        if not inserted:
+            # at-least-once重放的重复告警：已有首次路由结果，不重复路由
+            logger.debug("orchestrator.duplicate_alert_skipped", alert_id=alert.alert_id)
+            return
 
         # 2. 交分流引擎（有界微批队列，过载走本地兜底，不丢告警）
         if self.router is None:

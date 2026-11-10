@@ -300,13 +300,14 @@ class Database:
     async def execute(self, sql: str, params: tuple = ()) -> aiosqlite.Cursor:
         return await self.db.execute(sql, params)
 
-    async def buffered_execute(self, sql: str, params: tuple = ()) -> None:
-        """通过缓冲区写入（批量 commit）"""
+    async def buffered_execute(self, sql: str, params: tuple = ()) -> aiosqlite.Cursor | None:
+        """通过缓冲区写入（批量 commit）；返回cursor（rowcount可用），缓冲模式下为None"""
         if self._write_buffer:
             await self._write_buffer.add(sql, params)
-        else:
-            await self.db.execute(sql, params)
-            await self.db.commit()
+            return None
+        cursor = await self.db.execute(sql, params)
+        await self.db.commit()
+        return cursor
 
     async def fetch_one(self, sql: str, params: tuple = ()) -> dict | None:
         cursor = await self.db.execute(sql, params)

@@ -30,8 +30,7 @@ from aicso.models.case import (
     CaseSeverity,
     CaseStatus,
 )
-from aicso.router.batcher import RoutingBatcher
-from aicso.router.decision import (
+from aicso.models.routing import (
     NEW_CASE,
     ROUTE_TO,
     SRC_CACHE,
@@ -39,6 +38,7 @@ from aicso.router.decision import (
     SRC_SYSTEM_ONE,
     RoutingDecision,
 )
+from aicso.router.batcher import RoutingBatcher
 from aicso.router.fallback import LocalFallback
 from aicso.router.index import CaseRoutingIndex, entity_keys_of, entity_signature
 from aicso.router.metrics import RouterMetrics

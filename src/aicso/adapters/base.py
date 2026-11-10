@@ -28,6 +28,10 @@ class DataSourceAdapter(ABC):
         """标准化为统一Alert格式"""
         ...
 
+    async def commit(self) -> None:
+        """提交消费位点（支持offset语义的适配器覆写；默认无操作）"""
+        return None
+
     async def poll(self, since: datetime) -> list[Alert]:
         """拉取并标准化告警"""
         raw_alerts = await self.fetch_alerts(since)

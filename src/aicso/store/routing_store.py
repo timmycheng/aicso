@@ -5,7 +5,7 @@ import json
 
 from ulid import ULID
 
-from aicso.router.decision import RoutingDecision
+from aicso.models.routing import RoutingDecision
 from aicso.store.database import Database
 
 

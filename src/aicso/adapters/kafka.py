@@ -60,6 +60,8 @@ class KafkaAdapter(DataSourceAdapter):
         self._config: dict = {}
         self._connected = False
         self._mapper = SchemaMapper({}, default_source="kafka")
+        # 本批待提交位点 {TopicPartition: next_offset}——批次处理成功后由commit()提交
+        self._pending_offsets: dict = {}
 
     async def connect(self, config: dict) -> bool:
         """连接Kafka"""
@@ -76,7 +78,9 @@ class KafkaAdapter(DataSourceAdapter):
                 "bootstrap_servers": servers,
                 "group_id": group_id,
                 "auto_offset_reset": config.get("auto_offset_reset", "latest"),
-                "enable_auto_commit": True,
+                # at-least-once：告警持久化成功后手动提交位点（enable_auto_commit
+                # 的at-most-once语义会在崩溃时丢消息）
+                "enable_auto_commit": False,
                 "value_deserializer": lambda m: m.decode("utf-8", errors="ignore"),
             }
 
@@ -118,6 +122,7 @@ class KafkaAdapter(DataSourceAdapter):
         message_format = self._config.get("message_format", "json")
 
         alerts = []
+        self._pending_offsets = {}
         try:
             # getmany批量消费；单条消息经统一映射引擎展开（信封/数组）
             data = await self._consumer.getmany(timeout_ms=poll_timeout, max_records=max_batch)
@@ -125,6 +130,8 @@ class KafkaAdapter(DataSourceAdapter):
             for tp, messages in data.items():
                 for msg in messages:
                     raw_text = msg.value
+                    # 记录本批最高位点（commit提交 next_offset）
+                    self._pending_offsets[tp] = msg.offset + 1
                     if message_format == "json":
                         alerts.extend(self._mapper.expand_message(raw_text))
                     else:
@@ -143,6 +150,52 @@ class KafkaAdapter(DataSourceAdapter):
         for w in warnings:
             logger.warning("kafka.normalize_warning", alert_id=alert.alert_id, warning=w)
         return alert
+
+    async def commit(self) -> None:
+        """提交本批最高位点（批次全部持久化成功后由DataSourceManager调用）"""
+        if not self._pending_offsets or not self._consumer:
+            self._pending_offsets = {}
+            return
+        try:
+            try:
+                from aiokafka.structs import OffsetAndMetadata
+            except ImportError:
+                # aiokafka未安装（测试替身环境）：本地轻量对象即可
+                from collections import namedtuple
+                OffsetAndMetadata = namedtuple(
+                    "OffsetAndMetadata", ["offset", "metadata"])
+            def make_offset(off):
+                return OffsetAndMetadata(off, "")
+            offsets = {tp: make_offset(offset)
+                       for tp, offset in self._pending_offsets.items()}
+            await self._consumer.commit(offsets)
+            logger.debug("kafka.committed", partitions=len(offsets))
+        except Exception as e:
+            logger.error("kafka.commit_failed", error=str(e), exc_info=True)
+        finally:
+            self._pending_offsets = {}
+
+    def stats(self) -> dict:
+        """consumer lag 统计（highwater - 当前消费位点，按分区）"""
+        if not self._consumer or not self._connected:
+            return {"total_lag": None, "partitions": {}}
+        partitions = {}
+        total = 0
+        try:
+            for tp in self._consumer.assignment():
+                try:
+                    high = self._consumer.highwater(tp)
+                    pos = self._consumer.position(tp)
+                except Exception:
+                    continue
+                if high is None or pos is None:
+                    continue
+                lag = max(high - pos, 0)
+                partitions[f"{tp.topic}-{tp.partition}"] = lag
+                total += lag
+        except Exception as e:
+            logger.error("kafka.stats_failed", error=str(e))
+        return {"total_lag": total, "partitions": partitions}
 
     async def close(self):
         """关闭消费者"""

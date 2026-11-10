@@ -14,21 +14,30 @@ class AlertStore:
     def __init__(self, db: Database):
         self.db = db
 
-    async def create(self, alert: Alert) -> None:
-        await self.db.buffered_execute(
-            """INSERT INTO alerts (alert_id, source, rule_id, rule_name, severity,
+    async def create(self, alert: Alert) -> bool:
+        """持久化告警；返回是否新插入
+
+        alert_id主键幂等：重复投递（at-least-once重放）时忽略，
+        保留首次路由结果。调用方据此跳过重复路由。
+        """
+        # 直写execute不单独commit——由写缓冲批次的commit统一提交
+        # （崩溃未commit→重投→主键幂等吸收，语义自洽）
+        cursor = await self.db.execute(
+            """INSERT OR IGNORE INTO alerts (alert_id, source, rule_id, rule_name, severity,
                timestamp, src_ip, dst_ip, src_port, dst_port, protocol,
-               raw_log, enriched_data, case_id, is_false_positive, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               raw_log, enriched_data, case_id, is_false_positive,
+               created_at, routed_at, routing_source)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 alert.alert_id, alert.source, alert.rule_id, alert.rule_name,
                 alert.severity, alert.timestamp.isoformat(),
                 alert.src_ip, alert.dst_ip, alert.src_port, alert.dst_port,
                 alert.protocol, alert.raw_log, json.dumps(alert.enriched_data),
                 alert.case_id, alert.is_false_positive,
-                alert.created_at.isoformat(),
+                alert.created_at.isoformat(), None, None,
             ),
         )
+        return bool(cursor and cursor.rowcount)
 
     async def get(self, alert_id: str) -> dict | None:
         return await self.db.fetch_one(
