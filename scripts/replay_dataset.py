@@ -222,6 +222,10 @@ async def main() -> int:
                         help="ECS格式数据用 --schema ecs 零映射")
     parser.add_argument("--rate", type=float, default=0.0,
                         help="每秒回放条数（0=尽快；低速会真实影响pair窗汇入）")
+    parser.add_argument("--with-systemone", action="store_true",
+                        help="真实象信API裁决汇入（成本受控：仅有候选时调用+微批+缓存）")
+    parser.add_argument("--batch-size", type=int, default=50,
+                        help="微批上限（真实数据候选上下文大，422超上下文时调小，如8）")
     parser.add_argument("--benign", nargs="*", default=[],
                         help="场景名包含这些子串的按良性噪声流处理（不计收敛断言，只查误并）")
     parser.add_argument("--max-records", type=int, default=0, help="总条数上限（0=不限）")
@@ -245,9 +249,26 @@ async def main() -> int:
     if args.mode == "kafka":
         return await produce_kafka(streams, args)
 
-    results, metrics = await suite_dataset(
-        streams, field_mapping=default, schema=args.schema,
-        rate=args.rate, max_records=args.max_records)
+    client = None
+    if args.with_systemone:
+        from aicso.config import load_config
+        from aicso.systemone.client import SystemOneClient
+        config = load_config()
+        if not config.system_one.api_key:
+            print("缺少 System One api_key（config.yaml / .env XX-AI-KEY），无法跑模型模式")
+            return 1
+        client = SystemOneClient(
+            api_key=config.system_one.api_key, base_url=config.system_one.base_url,
+            model=config.system_one.model, timeout_ms=config.system_one.timeout_ms)
+
+    try:
+        results, metrics = await suite_dataset(
+            streams, field_mapping=default, schema=args.schema,
+            rate=args.rate, max_records=args.max_records, client=client,
+            batch_max_alerts=args.batch_size)
+    finally:
+        if client is not None:
+            await client.aclose()
     return 0 if all(r.ok for r in results) else 1
 
 
