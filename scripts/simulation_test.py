@@ -9,17 +9,22 @@
   uv run python scripts/simulation_test.py                    # local+scripted 全矩阵
   uv run python scripts/simulation_test.py --with-systemone   # 附加真实API抽检
   uv run python scripts/simulation_test.py --scale 2          # 流量放大
+  uv run python scripts/replay_dataset.py <数据集路径>...     # 真实数据集回放(issue #40)
 """
 from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
 import os
 import tempfile
 import time
 from dataclasses import dataclass
 
+import structlog
+
 from aicso.config import RoutingConfig, SystemOneConfig
+from aicso.mapping.engine import SchemaMapper
 from aicso.models.alert import Alert
 from aicso.models.case import Case, CaseSeverity, CaseStatus
 from aicso.router.engine import RouterEngine
@@ -498,6 +503,172 @@ async def suite_systemone_real(count: int = 40) -> list[SimResult]:
     await db.flush_and_close()
     await client.aclose()
     return out
+
+
+# ============ 真实数据集回放矩阵 ============
+
+@dataclass
+class ScenarioStream:
+    """数据集场景流：一个数据集文件 = 一个预期场景（天然的 expected-case 标签）
+
+    kind: attack=攻击场景(收敛断言对象) | benign=良性噪声(误并断言对象)
+    field_mapping: 该场景的字段路径覆盖（None=用套件级 field_mapping）
+    """
+    name: str
+    records: list[dict]
+    kind: str = "attack"   # attack | benign
+    field_mapping: dict | None = None
+
+
+async def suite_dataset(streams: list[ScenarioStream], field_mapping: dict | None = None,
+                        schema: str = "generic", rate: float = 0.0,
+                        max_records: int = 0) -> tuple[list[SimResult], dict]:
+    """真实数据集回放有效性矩阵（issue #40）
+
+    数据形状即真值：每个数据集文件=一个攻击场景或良性噪声流，断言：
+      1. 单场景收敛：带IP告警的case数 ≤ 去重(src,dst)对数（本地pair窗内结构下界）
+      2. 跨场景零串流：任何case不得同时含两个场景的告警
+      3. 良性零误并：良性告警不得进入含攻击告警的case
+    语义级收敛增益（模型裁决汇入）属真实SIEM调优范畴，记分卡输出、不强断言。
+
+    rate: 每秒回放条数（0=尽快）。路由pair窗与索引last_seen按摄入时钟计
+    （router/fallback.py PAIR_WINDOW_MINUTES=10），低速回放会真实产生更多
+    独立case——收敛断言仅在窗内速率下有意义。
+    """
+    print(f"\n── 真实数据集回放矩阵 · local 模式（{len(streams)}场景） ──")
+    out: list[SimResult] = []
+    tmp = tempfile.mkdtemp(prefix="sim-ds-")
+    prior_log_config = structlog.get_config()
+    structlog.configure(wrapper_class=structlog.make_filtering_bound_logger(logging.WARNING))
+    engine, db = await make_sim_engine(os.path.join(tmp, "d.db"))
+
+    def mapper_for(stream: ScenarioStream) -> SchemaMapper:
+        mapping = stream.field_mapping if stream.field_mapping is not None \
+            else (field_mapping or {})
+        return SchemaMapper({"schema": schema, "field_mapping": mapping},
+                            default_source="dataset")
+
+    alert_scenario: dict[str, str] = {}   # alert_id → 场景名
+    alert_has_ip: dict[str, bool] = {}
+    alert_entities: dict[str, set] = {}   # alert_id → 实体键集合
+    benign_alerts: set[str] = set()
+    scenario_pairs: dict[str, set] = {}   # 场景 → 去重(src,dst)对
+    warn_count = 0
+    total = 0
+    start = time.monotonic()
+    for stream in streams:
+        mapper = mapper_for(stream)
+        pairs: set = set()
+        for i, record in enumerate(stream.records):
+            if max_records and total >= max_records:
+                break
+            alert, warnings = mapper.normalize(
+                record, fallback_alert_id=f"{stream.name}-{i}")
+            warn_count += len(warnings)
+            await engine.alert_store.create(alert)
+            await engine.submit(alert)
+            alert_scenario[alert.alert_id] = stream.name
+            has_ip = bool(alert.src_ip or alert.dst_ip)
+            alert_has_ip[alert.alert_id] = has_ip
+            ents = set()
+            if alert.src_ip:
+                ents.add(f"ip:{alert.src_ip}")
+            if alert.dst_ip:
+                ents.add(f"ip:{alert.dst_ip}")
+            if alert.src_ip and alert.dst_ip:
+                ents.add(f"pair:{alert.src_ip}>{alert.dst_ip}")
+            alert_entities[alert.alert_id] = ents
+            if has_ip:
+                pairs.add((alert.src_ip, alert.dst_ip))
+            if stream.kind == "benign":
+                benign_alerts.add(alert.alert_id)
+            total += 1
+            if rate > 0:
+                await asyncio.sleep(1.0 / rate)
+        scenario_pairs[stream.name] = pairs
+        if max_records and total >= max_records:
+            break
+    await engine.flush()
+    await engine.alert_store.db.flush()   # 读己之写
+
+    elapsed = time.monotonic() - start
+    throughput = total / elapsed if elapsed else 0
+
+    case_of: dict[str, str] = {}
+    for alert_id in alert_scenario:
+        row = await engine.alert_store.get(alert_id)
+        if row and row.get("case_id"):
+            case_of[alert_id] = row["case_id"]
+
+    # 1 单场景收敛（仅带IP告警；无IP告警按无候选独立新建属预期形态）
+    per_scenario: dict = {}
+    for stream in streams:
+        ids = [a for a in alert_scenario if alert_scenario[a] == stream.name]
+        ip_ids = [a for a in ids if alert_has_ip[a]]
+        ip_cases = {case_of[a] for a in ip_ids if a in case_of}
+        pairs = scenario_pairs[stream.name]
+        per_scenario[stream.name] = {
+            "kind": stream.kind, "alerts": len(ids), "ip_alerts": len(ip_ids),
+            "cases": len({case_of[a] for a in ids if a in case_of}),
+            "ip_cases": len(ip_cases), "pairs": len(pairs),
+        }
+    over = {n: f"ip_case {m['ip_cases']}>对数{max(m['pairs'], 1)}"
+            for n, m in per_scenario.items()
+            if m["kind"] == "attack" and m["ip_cases"] > max(m["pairs"], 1)}
+    out.append(check("单场景收敛(带IP告警case数≤去重对数)", not over,
+                     f"超额:{over}" if over else f"{len(per_scenario)}场景达标"))
+
+    # 2 跨场景串流必须由共享实体解释：真实多数据集常共享同一靶场/基础设施，
+    #   同pair/同IP汇入同case是合法路由；不同场景告警无任何共享实体却同case
+    #   则是路由错误（索引损坏/错误合并）
+    case_scenarios: dict[str, set] = {}
+    for a, c in case_of.items():
+        case_scenarios.setdefault(c, set()).add(alert_scenario[a])
+    leaks = [c for c, s in case_scenarios.items() if len(s) > 1]
+    unexplained: dict[str, list] = {}
+    for c in leaks:
+        by_scn: dict[str, list[set]] = {}
+        for a, cc in case_of.items():
+            if cc == c:
+                by_scn.setdefault(alert_scenario[a], []).append(alert_entities[a])
+        bad_pairs = []
+        scns = sorted(by_scn)
+        for i, s1 in enumerate(scns):
+            for s2 in scns[i + 1:]:
+                if not any(ea & eb for ea in by_scn[s1] for eb in by_scn[s2]):
+                    bad_pairs.append(f"{s1}↔{s2}")
+        if bad_pairs:
+            unexplained[c] = bad_pairs
+    out.append(check("跨场景串流均有共享实体支撑", not unexplained,
+                     f"不可解释串流={list(unexplained.items())[:2]}"
+                     f"（可解释串流case {len(leaks) - len(unexplained)}个）"
+                     if unexplained else
+                     (f"串流case {len(leaks)}个均为共享实体汇入"
+                      if leaks else f"{len(case_scenarios)}个case场景纯净")))
+
+    # 3 良性零误并
+    attack_names = {s.name for s in streams if s.kind == "attack"}
+    benign_leak = [a for a, c in case_of.items()
+                   if a in benign_alerts and (case_scenarios.get(c, set()) & attack_names)]
+    out.append(check("良性零误并(不进攻击case)", not benign_leak,
+                     f"误并{len(benign_leak)}条" if benign_leak else ""))
+
+    print("  场景记分卡:")
+    for name, m in per_scenario.items():
+        conv = m["ip_alerts"] / m["ip_cases"] if m["ip_cases"] else 0.0
+        print(f"    {name}[{m['kind']}] 告警{m['alerts']}(带IP{m['ip_alerts']})"
+              f" → case {m['cases']}(带IP{m['ip_cases']})"
+              f" 去重对{m['pairs']} 收敛比{conv:.1f}")
+    print(f"  吞吐 {throughput:.0f}/s 映射警告{warn_count}条 用时{elapsed:.1f}s"
+          f"（串流case {len(leaks)}个）")
+
+    metrics_summary = {"total": total, "throughput": round(throughput),
+                       "mapping_warnings": warn_count, "scenarios": per_scenario,
+                       "elapsed_s": round(elapsed, 1)}
+    await asyncio.sleep(0.2)
+    await db.flush_and_close()
+    structlog.configure(**prior_log_config)
+    return out, metrics_summary
 
 
 # ============ 主入口 ============
