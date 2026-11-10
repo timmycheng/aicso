@@ -28,8 +28,8 @@ class DataSourceHandle:
         self.poll_count: int = 0
         self.task: asyncio.Task | None = None
 
-    def status_dict(self) -> dict:
-        return {
+    def status_dict(self, stats: dict | None = None) -> dict:
+        data = {
             "name": self.name,
             "type": self.ds_config.type,
             "enabled": self.ds_config.enabled,
@@ -39,7 +39,12 @@ class DataSourceHandle:
             "last_error": self.last_error,
             "total_fetched": self.total_fetched,
             "poll_count": self.poll_count,
+            "lag": None,
         }
+        if stats:
+            data["lag"] = stats.get("total_lag")
+            data["lag_partitions"] = stats.get("partitions", {})
+        return data
 
 
 class DataSourceManager:
@@ -152,16 +157,28 @@ class DataSourceManager:
                             total=handle.total_fetched,
                         )
 
+                    # 批次处理：系统级失败计数>0则跳过位点提交（重投），
+                    # 重复投递由 alert_id 主键幂等吸收（INSERT OR IGNORE）
+                    failures = 0
                     for alert in alerts:
                         try:
                             await self._orchestrator.handle_alert(alert)
                         except Exception as e:
+                            failures += 1
                             logger.error(
                                 "datasource_manager.handle_alert_error",
                                 name=name,
                                 alert_id=alert.alert_id,
                                 error=str(e),
                             )
+
+                    if failures:
+                        logger.warning(
+                            "datasource_manager.skip_commit",
+                            name=name, failures=failures, batch=len(alerts),
+                        )
+                    elif hasattr(handle.adapter, "commit"):
+                        await handle.adapter.commit()
 
                     # 更新 since 为本次拉取时间
                     since = datetime.utcnow()
@@ -178,4 +195,14 @@ class DataSourceManager:
         return self._handles.get(name)
 
     def list_status(self) -> list[dict]:
-        return [h.status_dict() for h in self._handles.values()]
+        rows = []
+        for h in self._handles.values():
+            stats = None
+            if hasattr(h.adapter, "stats"):
+                try:
+                    stats = h.adapter.stats()
+                except Exception as e:
+                    logger.warning("datasource_manager.stats_error",
+                                   name=h.name, error=str(e))
+            rows.append(h.status_dict(stats))
+        return rows
