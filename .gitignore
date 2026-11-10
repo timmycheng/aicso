@@ -21,6 +21,7 @@ server_err.log
 
 # Data
 data/
+.tmp-datasets/
 *.tar
 *.tar.gz
 offline_pkgs*/
