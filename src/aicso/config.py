@@ -83,7 +83,9 @@ class SystemOneConfig(BaseModel):
     api_key: str | None = None  # 支持 ${XX-AI-KEY} 环境变量展开
     model: str = "xiangxin-latest"
     batch_window_ms: int = 100   # 微批聚合窗口
-    batch_max_alerts: int = 50   # 单批上限（64k token预算内，见 §5.2）
+    batch_max_alerts: int = 50   # 单批条数上限（token预算另约束，见 token_budget）
+    token_budget: int = 48000    # 单请求token估算预算——象信上下文65536，留输出与
+                                 # 估算误差余量(#42)；真实数据候选上下文大，超预算切子批
     timeout_ms: int = 2000
     confidence_threshold: float = 0.6  # 低于阈值 → 保守新建Case + 人工复核
     cache_ttl_seconds: int = 60  # 同实体签名决策缓存

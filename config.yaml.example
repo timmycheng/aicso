@@ -63,7 +63,8 @@ system_one:
   api_key: ${XX-AI-KEY}
   model: xiangxin-latest
   batch_window_ms: 100         # 微批聚合窗口
-  batch_max_alerts: 50         # 单批上限
+  batch_max_alerts: 50         # 单批条数上限
+  token_budget: 48000          # 单请求token估算预算（超预算切子批，防422整流降级，#42）
   timeout_ms: 2000
   confidence_threshold: 0.6    # 低于阈值 → 保守新建Case + 人工复核
   cache_ttl_seconds: 60
