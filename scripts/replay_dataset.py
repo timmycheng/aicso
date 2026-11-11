@@ -44,19 +44,23 @@ SUPPORTED_SUFFIXES = (".jsonl", ".json", ".csv")
 
 # Security-Datasets（Sysmon/nxlog 原始字段）→ 内部Alert 路径映射
 # alert_id 缺省不映射：由套件按 "<场景名>-<序号>" 兜底生成（跨主机 RecordNumber 会重复）
+# entity_mapping：Hostname → host 实体（issue #44，无IP主机事件可进候选）
 PRESETS: dict[str, dict | None] = {
     "security-datasets": {
-        "src_ip": "SourceIp",
-        "dst_ip": "DestinationIp",
-        "src_port": "SourcePort",
-        "dst_port": "DestinationPort",
-        "rule_id": "EventID",
-        "rule_name": "Channel",
-        "severity_text": "Severity",
-        "severity_int": "SeverityValue",
-        "timestamp": "@timestamp",
-        "protocol": "Protocol",
-        "source": "SourceName",
+        "fields": {
+            "src_ip": "SourceIp",
+            "dst_ip": "DestinationIp",
+            "src_port": "SourcePort",
+            "dst_port": "DestinationPort",
+            "rule_id": "EventID",
+            "rule_name": "Channel",
+            "severity_text": "Severity",
+            "severity_int": "SeverityValue",
+            "timestamp": "@timestamp",
+            "protocol": "Protocol",
+            "source": "SourceName",
+        },
+        "entity_mapping": {"host": "Hostname"},
     },
     "none": None,
 }
@@ -140,27 +144,35 @@ def load_streams(paths: list[str], max_records: int = 0,
     return streams
 
 
-def resolve_field_mapping(args) -> tuple[dict | None, dict[str, dict]]:
-    """字段映射解析 → (默认映射, 按场景名映射)
+def resolve_field_mapping(args) -> tuple[dict | None, dict, dict[str, dict]]:
+    """映射解析 → (默认字段路径, 默认实体映射, 按场景名字段覆盖)
 
     --field-mapping JSON 两种形态:
-      {"src_ip": "...", ...}                     平铺=全部场景的默认映射
-      {"default": {...}, "<场景名>": {...}, ...}  按场景覆盖（混合格式数据集）
-    preset 作为默认映射的底座。
+      {"src_ip": "...", ...}          平铺=全部场景的字段路径覆盖
+      {"default": {"fields": {...}, "entity_mapping": {...}},
+       "<场景名>": {"fields": {...}} }  按场景覆盖（混合格式数据集）
+    preset 作为底座；场景段内含 "fields" 键则取之，否则整段视为字段路径。
     """
-    default = dict(PRESETS.get(args.preset) or {})
+    preset = PRESETS.get(args.preset) or {}
+    fields = dict(preset.get("fields") or {})
+    entities = dict(preset.get("entity_mapping") or {})
     by_name: dict[str, dict] = {}
     if args.field_mapping:
         with open(args.field_mapping, encoding="utf-8") as f:
             custom = json.load(f)
         if isinstance(custom, dict) and "default" in custom:
-            default.update(custom.get("default") or {})
+            d = custom.get("default") or {}
+            fields.update(d.get("fields") or {})
+            entities.update(d.get("entity_mapping") or {})
             for name, m in custom.items():
-                if name != "default" and isinstance(m, dict):
-                    by_name[name] = dict(default, **m)
+                if name in ("default", "entity_mapping", "entity_short_name",
+                            "_comment") or not isinstance(m, dict):
+                    continue
+                by_name[name] = m.get("fields") or {
+                    k: v for k, v in m.items() if k != "entity_mapping"}
         elif isinstance(custom, dict):
-            default.update(custom)
-    return (default or None), by_name
+            fields.update(custom)
+    return (fields or None), entities, by_name
 
 
 async def produce_kafka(streams: list[ScenarioStream], args) -> int:
@@ -234,9 +246,9 @@ async def main() -> int:
     parser.add_argument("--linger-ms", type=int, default=50, help="producer批量等待")
     args = parser.parse_args()
 
-    default, by_name = resolve_field_mapping(args)
+    fields, entities, by_name = resolve_field_mapping(args)
     streams = load_streams(args.paths, max_records=args.max_records,
-                           mapping_by_name=by_name, mapping_default=default)
+                           mapping_by_name=by_name, mapping_default=fields)
     if not streams:
         print("无可用数据集")
         return 1
@@ -263,7 +275,8 @@ async def main() -> int:
 
     try:
         results, metrics = await suite_dataset(
-            streams, field_mapping=default, schema=args.schema,
+            streams, field_mapping=fields, entity_mapping=entities,
+            schema=args.schema,
             rate=args.rate, max_records=args.max_records, client=client,
             batch_max_alerts=args.batch_size)
     finally:

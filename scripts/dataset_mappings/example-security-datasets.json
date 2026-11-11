@@ -1,23 +1,30 @@
 {
-  "_comment": "Security-Datasets 混合格裾示例。default=Windows Sysmon/nxlog 原始字段(--preset security-datasets 同款)；按场景名(文件stem)覆盖对应数据集映射。用法: --preset security-datasets --field-mapping scripts/dataset_mappings/example-security-datasets.json。注意: 映射值必须是非空字符串路径(缺省键走 profile 默认路径，找不到即 None)。",
+  "_comment": "Security-Datasets 混合格裾示例。default.fields=Windows Sysmon/nxlog 原始字段(--preset security-datasets 同款)；default.entity_mapping=弱实体提取路径(issue #44)；按场景名(文件stem)覆盖字段映射。用法: --preset security-datasets --field-mapping scripts/dataset_mappings/example-security-datasets.json。注意: 映射值必须是非空字符串路径(缺省键走 profile 默认路径，找不到即 None)。",
   "default": {
-    "src_ip": "SourceIp",
-    "dst_ip": "DestinationIp",
-    "src_port": "SourcePort",
-    "dst_port": "DestinationPort",
-    "rule_id": "EventID",
-    "rule_name": "Channel",
-    "severity_text": "Severity",
-    "severity_int": "SeverityValue",
-    "timestamp": "@timestamp",
-    "protocol": "Protocol",
-    "source": "SourceName"
+    "fields": {
+      "src_ip": "SourceIp",
+      "dst_ip": "DestinationIp",
+      "src_port": "SourcePort",
+      "dst_port": "DestinationPort",
+      "rule_id": "EventID",
+      "rule_name": "Channel",
+      "severity_text": "Severity",
+      "severity_int": "SeverityValue",
+      "timestamp": "@timestamp",
+      "protocol": "Protocol",
+      "source": "SourceName"
+    },
+    "entity_mapping": {
+      "host": "Hostname"
+    }
   },
   "aws_s3_honeybucketlogs": {
-    "alert_id": "Event ID",
-    "src_ip": "Source IP",
-    "rule_name": "Event Name",
-    "timestamp": "Event DateTime",
-    "source": "Event Type"
+    "fields": {
+      "alert_id": "Event ID",
+      "src_ip": "Source IP",
+      "rule_name": "Event Name",
+      "timestamp": "Event DateTime",
+      "source": "Event Type"
+    }
   }
 }

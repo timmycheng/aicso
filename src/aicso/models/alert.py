@@ -28,6 +28,11 @@ class Alert(BaseModel):
     dst_port: int | None = None
     protocol: str | None = None
 
+    # 类型化实体（issue #44）：{"host": "web-01", "user": "jdoe", ...}
+    # 由SchemaMapper按profile/entity_mapping提取；ip/pair外的实体为弱类型，
+    # 仅产生候选交模型裁决（弱类型自动合并默认关闭，见RoutingConfig）
+    entities: dict = Field(default_factory=dict)
+
     # 原始数据
     raw_log: str | None = None
     enriched_data: dict = Field(default_factory=dict)

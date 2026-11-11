@@ -28,6 +28,7 @@ from aicso.mapping.engine import SchemaMapper
 from aicso.models.alert import Alert
 from aicso.models.case import Case, CaseSeverity, CaseStatus
 from aicso.router.engine import RouterEngine
+from aicso.router.index import entity_keys_of
 from aicso.router.merge import MergeSplitEngine
 from aicso.store.alert_store import AlertStore
 from aicso.store.case_store import CaseStore
@@ -64,7 +65,8 @@ class ScriptedClient:
         self.error: Exception | None = None
         self.calls = 0
 
-    async def system_one(self, state: str, questions: dict) -> SystemOneResponse:
+    async def system_one(self, state: str, questions: dict,
+                         timeout_ms: int | None = None) -> SystemOneResponse:
         self.calls += 1
         if self.error:
             raise self.error
@@ -522,10 +524,11 @@ class ScenarioStream:
 
 
 async def suite_dataset(streams: list[ScenarioStream], field_mapping: dict | None = None,
+                        entity_mapping: dict | None = None,
                         schema: str = "generic", rate: float = 0.0,
                         max_records: int = 0, client=None,
                         batch_max_alerts: int = 50) -> tuple[list[SimResult], dict]:
-    """真实数据集回放有效性矩阵（issue #40）
+    """真实数据集回放有效性矩阵（issue #40/#44）
 
     数据形状即真值：每个数据集文件=一个攻击场景或良性噪声流，断言：
       1. 单场景收敛：带IP告警的case数 ≤ 去重(src,dst)对数（本地pair窗内结构下界）
@@ -533,6 +536,7 @@ async def suite_dataset(streams: list[ScenarioStream], field_mapping: dict | Non
       3. 良性零误并：良性告警不得进入含攻击告警的case
     client=None 走 local 兜底（确定性）；传 SystemOneClient 走模型裁决
     （语义判定"是否同一事件"，记分卡输出决策来源与API用量）。
+    entity_mapping: 弱实体提取路径（issue #44，如 {"host": "Hostname"}）。
     batch_max_alerts: 微批上限——真实数据的候选上下文远大于合成告警，
     大批次会超模型上下文（65536）触发422降级，需按 token 预算调小。
 
@@ -552,7 +556,8 @@ async def suite_dataset(streams: list[ScenarioStream], field_mapping: dict | Non
     def mapper_for(stream: ScenarioStream) -> SchemaMapper:
         mapping = stream.field_mapping if stream.field_mapping is not None \
             else (field_mapping or {})
-        return SchemaMapper({"schema": schema, "field_mapping": mapping},
+        return SchemaMapper({"schema": schema, "field_mapping": mapping,
+                             "entity_mapping": entity_mapping or {}},
                             default_source="dataset")
 
     alert_scenario: dict[str, str] = {}   # alert_id → 场景名
@@ -577,14 +582,9 @@ async def suite_dataset(streams: list[ScenarioStream], field_mapping: dict | Non
             alert_scenario[alert.alert_id] = stream.name
             has_ip = bool(alert.src_ip or alert.dst_ip)
             alert_has_ip[alert.alert_id] = has_ip
-            ents = set()
-            if alert.src_ip:
-                ents.add(f"ip:{alert.src_ip}")
-            if alert.dst_ip:
-                ents.add(f"ip:{alert.dst_ip}")
-            if alert.src_ip and alert.dst_ip:
-                ents.add(f"pair:{alert.src_ip}>{alert.dst_ip}")
-            alert_entities[alert.alert_id] = ents
+            # 与 entity_keys_of 同源——弱实体（host/user/…）必须计入，
+            # 否则串流断言会把合法的共享主机汇入误判为不可解释（#44教训）
+            alert_entities[alert.alert_id] = set(entity_keys_of(alert))
             if has_ip:
                 pairs.add((alert.src_ip, alert.dst_ip))
             if stream.kind == "benign":
@@ -632,11 +632,26 @@ async def suite_dataset(streams: list[ScenarioStream], field_mapping: dict | Non
             "cases": len({case_of[a] for a in ids if a in case_of}),
             "ip_cases": len(ip_cases), "pairs": len(pairs),
         }
-    over = {n: f"ip_case {m['ip_cases']}>对数{max(m['pairs'], 1)}"
-            for n, m in per_scenario.items()
-            if m["kind"] == "attack" and m["ip_cases"] > max(m["pairs"], 1)}
-    out.append(check("单场景收敛(带IP告警case数≤去重对数)", not over,
-                     f"超额:{over}" if over else f"{len(per_scenario)}场景达标"))
+    # 1 单场景收敛——语义随模式不同：
+    #   local: pair窗机械合并，ip_cases≤去重对数是结构不变量（硬断言）
+    #   systemone: 模型有权保守新建（弱实体误并风险的对价），
+    #     ip_cases可超对数；硬断言改为"存在收敛"（case总数<告警总数）
+    if client is None:
+        over = {n: f"ip_case {m['ip_cases']}>对数{max(m['pairs'], 1)}"
+                for n, m in per_scenario.items()
+                if m["kind"] == "attack" and m["ip_cases"] > max(m["pairs"], 1)}
+        out.append(check("单场景收敛(带IP告警case数≤去重对数)", not over,
+                         f"超额:{over}" if over else f"{len(per_scenario)}场景达标"))
+    else:
+        no_conv = {n: f"{m['cases']}case≥{m['alerts']}告警"
+                   for n, m in per_scenario.items()
+                   if m["kind"] == "attack" and m["cases"] >= m["alerts"] > 0}
+        out.append(check("单场景收敛(模型模式下存在收敛)", not no_conv,
+                         f"无收敛:{no_conv}" if no_conv
+                         else f"{len(per_scenario)}场景均收敛"
+                              f"（模型保守新建"
+                              f"{decision_sources.get('system_one:new_case', 0)}条"
+                              f"属裁决语义）"))
 
     # 2 跨场景串流必须由共享实体解释：真实多数据集常共享同一靶场/基础设施，
     #   同pair/同IP汇入同case是合法路由；不同场景告警无任何共享实体却同case
@@ -659,6 +674,16 @@ async def suite_dataset(streams: list[ScenarioStream], field_mapping: dict | Non
                     bad_pairs.append(f"{s1}↔{s2}")
         if bad_pairs:
             unexplained[c] = bad_pairs
+    if unexplained:
+        # 串流取证：按场景 dump case 内告警实体集，定位路由路径漏洞
+        for c in list(unexplained)[:3]:
+            print(f"    🔍 串流取证 {c}:")
+            for scn in sorted(case_scenarios[c]):
+                members = [a for a, cc in case_of.items()
+                           if cc == c and alert_scenario[a] == scn]
+                print(f"      [{scn}] {len(members)}条")
+                for a in members[:3]:
+                    print(f"        {a}: {sorted(alert_entities[a])}")
     out.append(check("跨场景串流均有共享实体支撑", not unexplained,
                      f"不可解释串流={list(unexplained.items())[:2]}"
                      f"（可解释串流case {len(leaks) - len(unexplained)}个）"

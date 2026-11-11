@@ -32,7 +32,8 @@ class OverflowClient:
         self.max_questions = max_questions   # None=永不422；0=总是422
         self.call_sizes: list[int] = []
 
-    async def system_one(self, state: str, questions: dict) -> SystemOneResponse:
+    async def system_one(self, state: str, questions: dict,
+                         timeout_ms: int | None = None) -> SystemOneResponse:
         self.call_sizes.append(len(questions))
         if self.max_questions is not None and len(questions) > self.max_questions:
             raise InvalidRequestError(

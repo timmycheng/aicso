@@ -64,7 +64,7 @@ system_one:
   model: xiangxin-latest
   batch_window_ms: 100         # 微批聚合窗口
   batch_max_alerts: 50         # 单批条数上限
-  token_budget: 48000          # 单请求token估算预算（超预算切子批，防422整流降级，#42）
+  token_budget: 32000          # 单请求token估算预算（超预算切子批，防422/连接中断整流降级，#42）
   timeout_ms: 2000
   confidence_threshold: 0.6    # 低于阈值 → 保守新建Case + 人工复核
   cache_ttl_seconds: 60
@@ -78,6 +78,12 @@ routing:
   high_water_mark: 0.8
   overload_mark: 0.95
   s2_concurrency: 3
+  # 类型化实体白名单（issue #44）：进候选索引的弱实体类型，
+  # ECS源默认提取 host/user/file_hash/dst_domain；可按审计/处置结论增删
+  entity_types: [host, user, file_hash, dst_domain]
+  # 弱实体自动合并：默认关——弱实体仅产生候选交模型裁决；
+  # 开启后共享弱实体在pair窗内直接汇入（误并风险自担）
+  weak_entity_auto_merge: false
 
 # 数据源配置
 datasources:
@@ -94,6 +100,9 @@ datasources:
   #     topic: siem-alerts
   #     group_id: aicso-consumer
   #     schema: ecs                  # ECS源零映射
+  #     # 弱实体提取（issue #44）：ECS源默认按profile提取 host/user/file_hash/dst_domain
+  #     # 非标准字段名可用 entity_mapping 覆盖：{"host": "computer_name"}
+  #     # entity_short_name: true     # host FQDN→短名（归一责任默认数据源侧，引擎侧可选）
   # siem_kafka:
   #   ...以下为自定义映射示例...
   #   type: kafka

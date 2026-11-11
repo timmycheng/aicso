@@ -27,7 +27,8 @@ def _parse_ts(value) -> datetime | None:
 def entity_keys_of(alert: Alert) -> list[str]:
     """从告警提取实体键（倒排索引的key）
 
-    仅收录 IP/对端实体——"同一事件"的本地强信号。
+    IP/对端为位置型强信号；alert.entities 为类型化弱实体（issue #44，
+    host/user/file_hash/dst_domain…）——弱实体仅产生候选交模型裁决。
     rule_id 不参与候选生成：同一检测规则全网多目标触发是SIEM常态，
     仅同规则意味着"同类攻击"而非"同一事件"（issue #31）；
     rule_id 仍保留在 entity_signature 中供决策缓存使用。
@@ -39,12 +40,16 @@ def entity_keys_of(alert: Alert) -> list[str]:
         keys.append(f"ip:{alert.dst_ip}")
     if alert.src_ip and alert.dst_ip:
         keys.append(f"pair:{alert.src_ip}>{alert.dst_ip}")
+    for etype, value in (alert.entities or {}).items():
+        if value:
+            keys.append(f"{etype}:{value}")
     return keys
 
 
 def entity_signature(alert: Alert) -> str:
     """告警实体签名（决策缓存的key）"""
-    return f"{alert.src_ip or '-'}|{alert.dst_ip or '-'}|{alert.rule_id or '-'}"
+    entities = "|".join(f"{k}={v}" for k, v in sorted((alert.entities or {}).items()))
+    return f"{alert.src_ip or '-'}|{alert.dst_ip or '-'}|{alert.rule_id or '-'}|{entities}"
 
 
 @dataclass
@@ -64,18 +69,29 @@ class CaseRoutingIndex:
     """实体倒排索引: entity_key -> 活跃Case集合
 
     候选打分 = 与告警实体的交集大小，并列时最近活跃优先。
+    entity_types（issue #44）：进索引的弱实体类型门控——ip/pair 恒可入，
+    其余类型仅白名单内的入索引产生候选；类型可在 RoutingConfig.entity_types
+    配置（回放审计/人工处置/LLM建议后续动态调整的落点）。
     """
 
-    def __init__(self, top_k: int = 10):
+    def __init__(self, top_k: int = 10, entity_types: set[str] | None = None):
         self.top_k = top_k
+        self.entity_types: set[str] = set(entity_types or ())
         self._slots: dict[str, CaseSlot] = {}
         self._entity_map: dict[str, set[str]] = {}
+
+    def _admit(self, key: str) -> bool:
+        """实体键准入：ip/pair 强类型恒入，弱类型按配置白名单（issue #44）"""
+        prefix = key.split(":", 1)[0]
+        if prefix in ("ip", "pair"):
+            return True
+        return prefix in self.entity_types
 
     def add_case(self, case_id: str, summary: str, entity_keys: list[str]) -> None:
         slot = CaseSlot(
             case_id=case_id,
             summary=summary,
-            entity_keys=set(entity_keys),
+            entity_keys={k for k in entity_keys if self._admit(k)},
         )
         self._slots[case_id] = slot
         for key in slot.entity_keys:
@@ -89,7 +105,7 @@ class CaseRoutingIndex:
         slot.last_seen = datetime.utcnow()
         slot.hits += 1
         for key in entity_keys:
-            if key not in slot.entity_keys:
+            if self._admit(key) and key not in slot.entity_keys:
                 slot.entity_keys.add(key)
                 self._entity_map.setdefault(key, set()).add(case_id)
 
@@ -122,6 +138,8 @@ class CaseRoutingIndex:
         """按实体交集打分取top-K候选"""
         scores: dict[str, int] = {}
         for key in entity_keys:
+            if not self._admit(key):
+                continue
             for case_id in self._entity_map.get(key, ()):  # 空集合安全
                 scores[case_id] = scores.get(case_id, 0) + 1
         if not scores:

@@ -45,7 +45,8 @@ class FakeSystemOneClient:
         self.error = error
         self.calls: list[dict] = []
 
-    async def system_one(self, state: str, questions: dict) -> SystemOneResponse:
+    async def system_one(self, state: str, questions: dict,
+                         timeout_ms: int | None = None) -> SystemOneResponse:
         self.calls.append({"state": state, "questions": questions})
         if self.error:
             raise self.error
