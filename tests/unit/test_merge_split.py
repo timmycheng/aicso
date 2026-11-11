@@ -23,7 +23,7 @@ class FakeMergeClient:
         self.error = error
         self.calls: list[dict] = []
 
-    async def system_one(self, state, questions):
+    async def system_one(self, state, questions, timeout_ms=None):
         self.calls.append({"state": state, "questions": questions})
         if self.error:
             raise self.error

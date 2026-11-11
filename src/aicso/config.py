@@ -84,8 +84,8 @@ class SystemOneConfig(BaseModel):
     model: str = "xiangxin-latest"
     batch_window_ms: int = 100   # 微批聚合窗口
     batch_max_alerts: int = 50   # 单批条数上限（token预算另约束，见 token_budget）
-    token_budget: int = 48000    # 单请求token估算预算——象信上下文65536，留输出与
-                                 # 估算误差余量(#42)；真实数据候选上下文大，超预算切子批
+    token_budget: int = 32000    # 单请求token估算预算——象信上下文65536；真实数据实测
+                                 # ~50k token请求有连接中断风险(#42/#44验收)，留2倍余量
     timeout_ms: int = 2000
     confidence_threshold: float = 0.6  # 低于阈值 → 保守新建Case + 人工复核
     cache_ttl_seconds: int = 60  # 同实体签名决策缓存
@@ -96,6 +96,13 @@ class SystemOneConfig(BaseModel):
 
 class RoutingConfig(BaseModel):
     """路由队列与背压（见 docs/REFACTOR_DESIGN.md §5.7）"""
+    # 类型化实体白名单：进候选索引的弱实体类型（issue #44）。
+    # 默认四类起步；后续可由回放审计/人工处置/LLM建议机制动态调整
+    entity_types: list[str] = Field(
+        default_factory=lambda: ["host", "user", "file_hash", "dst_domain"])
+    # 弱实体类型自动合并开关：默认关——弱实体仅产生候选交模型裁决。
+    # 开启后共享弱实体的告警在pair窗内直接汇入（有误并风险，如共享服务账号）
+    weak_entity_auto_merge: bool = False
     queue_max_size: int = 10000
     high_water_mark: float = 0.8   # 水位≥80%: 告警+指标
     overload_mark: float = 0.95    # 水位≥95%: 过载模式，本地兜底接管

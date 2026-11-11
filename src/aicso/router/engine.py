@@ -104,8 +104,12 @@ class RouterEngine:
         self._client = client if (client and system_one_config.enabled) else None
         self.on_new_case = on_new_case
 
-        self.index = CaseRoutingIndex(top_k=system_one_config.candidate_top_k)
-        self.fallback = LocalFallback()
+        self.index = CaseRoutingIndex(
+            top_k=system_one_config.candidate_top_k,
+            entity_types=set(routing_config.entity_types),
+        )
+        self.fallback = LocalFallback(
+            weak_auto_merge=routing_config.weak_entity_auto_merge)
         self.metrics = RouterMetrics()
 
         self._batcher = RoutingBatcher(
@@ -290,8 +294,10 @@ class RouterEngine:
         question = Choice(
             instructions=(
                 f"这是第{idx + 1}条安全告警。判断它应汇入哪个已有的安全事件(Case)。"
-                "判定依据：告警的源/目标IP与候选事件实体是否重叠、是否明显属于同一攻击链。"
-                "注意：仅攻击类型或规则名相同不是合并理由——不同源不同目标的同类攻击应新建独立事件。"
+                "判定依据：告警的实体（源/目标IP、主机、用户、域名、文件哈希等）"
+                "与候选事件实体是否重叠、是否明显属于同一攻击链。"
+                "注意：仅攻击类型或规则名相同不是合并理由——不同源不同目标的同类攻击应新建独立事件；"
+                "共享主机/用户也需结合行为连贯性判断，不必然是同一事件。"
                 "若所有候选均无实体关联，选 __new__。"
             ),
             criteria=criteria,
@@ -309,8 +315,13 @@ class RouterEngine:
         assert self._client is not None
         state = "\n\n".join(it.state for it in items)
         questions = {it.name: it.question for it in items}
+        # 大批推理时长随输入规模增长：2s基线+0.3ms/估算token（45k批≈15s）。
+        # 固定2s会把正常大请求误判为网络错误→整流降级（#42/#44验收实测）
+        est_tokens = sum(it.est_tokens for it in items)
+        req_timeout = self.scfg.timeout_ms + int(est_tokens * 0.3)
         try:
-            response = await self._client.system_one(state=state, questions=questions)
+            response = await self._client.system_one(state=state, questions=questions,
+                                                     timeout_ms=req_timeout)
         except InvalidRequestError as e:
             if e.status_code != 422 or len(items) <= 1:
                 raise
@@ -690,17 +701,32 @@ class RouterEngine:
             f"源IP {alert.src_ip or '-'} → 目标IP {alert.dst_ip or '-'}",
             f"严重度 {alert.severity or '-'}",
         ]
+        if alert.entities:
+            parts.append("实体: " + _entity_evidence(
+                {f"{k}:{v}" for k, v in alert.entities.items()}))
         return " | ".join(parts)
 
 
+_ENTITY_LABELS = {
+    "host": "主机",
+    "user": "用户",
+    "file_hash": "文件哈希",
+    "dst_domain": "域名",
+}
+
+
 def _entity_evidence(entity_keys: set[str], limit: int = 6) -> str:
-    """实体键转人读摘要（System One判定证据）"""
+    """实体键转人读摘要（System One判定证据，issue #44支持弱实体类型）"""
     items = []
     for key in sorted(entity_keys)[:limit]:
         if key.startswith("pair:"):
             items.append(key[5:].replace(">", "→"))
         elif key.startswith("ip:"):
             items.append(key[3:])
+        else:
+            etype, _, value = key.partition(":")
+            label = _ENTITY_LABELS.get(etype, etype)
+            items.append(f"{label}{value}")
     return ", ".join(items) or "无记录"
 
 

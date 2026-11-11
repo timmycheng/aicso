@@ -186,9 +186,14 @@ class SystemOneClient:
         await self.aclose()
 
     async def system_one(
-        self, state: str, questions: dict[str, Question]
+        self, state: str, questions: dict[str, Question],
+        timeout_ms: int | None = None,
     ) -> SystemOneResponse:
-        """一次请求并行多个类型化问题，返回带校准置信度的答案"""
+        """一次请求并行多个类型化问题，返回带校准置信度的答案
+
+        timeout_ms: 本次请求覆盖构造超时（issue #42/#44）——大token批的
+        推理时长随输入规模增长，固定2s会把正常大请求误判为网络错误降级。
+        """
         payload = {
             "state": state,
             "model": self.model,
@@ -202,10 +207,12 @@ class SystemOneClient:
         client = await self._ensure_client()
         start = time.monotonic()
         attempt = 0
+        req_timeout = (timeout_ms or self.timeout_ms) / 1000
         while True:
             attempt += 1
             try:
-                resp = await client.post("/systemone", json=payload, headers=headers)
+                resp = await client.post("/systemone", json=payload, headers=headers,
+                                         timeout=req_timeout)
             except (httpx.TimeoutException, httpx.TransportError) as e:
                 if attempt > self.max_retries:
                     raise SystemOneUnavailableError(

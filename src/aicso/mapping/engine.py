@@ -10,6 +10,8 @@
   severity_mapping: {}# 自定义数值→级别映射（如 {1: critical, 2: high}）
   timestamp_format: "%Y-%m-%d %H:%M:%S"  # 自定义strptime模板（可选）
   events_path: events # 信封路径：消息内指向事件数组的点号路径（可选）
+  entity_mapping: {}  # 类型化实体提取路径覆盖（issue #44）：{"host": "Hostname"}
+  entity_short_name: false  # host实体FQDN→短名（引擎侧可选归一；归一责任默认数据源侧）
 """
 from __future__ import annotations
 
@@ -47,6 +49,8 @@ class SchemaMapper:
         self.default_source = default_source
         self.schema = config.get("schema", "auto")
         self.field_mapping: dict = config.get("field_mapping", {}) or {}
+        self.entity_mapping: dict = config.get("entity_mapping", {}) or {}
+        self.entity_short_name: bool = bool(config.get("entity_short_name", False))
         self.severity_mapping: dict = config.get("severity_mapping", {}) or {}
         self.timestamp_format: str | None = config.get("timestamp_format")
         self.events_path: str | None = config.get("events_path")
@@ -68,6 +72,9 @@ class SchemaMapper:
         # 自定义路径覆盖profile默认（向后兼容存量field_mapping配置）
         fields.update(self.field_mapping)
         profile["fields"] = fields
+        entities = dict(profile.get("entities", {}))
+        entities.update(self.entity_mapping)
+        profile["entities"] = entities
         return profile
 
     @staticmethod
@@ -143,8 +150,16 @@ class SchemaMapper:
 
         src_ip = getf("src_ip")
         dst_ip = getf("dst_ip")
+
+        # 类型化实体提取（issue #44）：弱实体让无IP告警可进候选
+        entities = self._extract_entities(raw, profile)
         if not src_ip and not dst_ip:
-            warnings.append("无源/目标IP实体，该告警将独立建Case（无候选可汇入）")
+            if entities:
+                evidence = ", ".join(f"{k}:{v}" for k, v in sorted(entities.items()))
+                warnings.append(
+                    f"无源/目标IP实体，弱实体({evidence})可进候选交模型裁决")
+            else:
+                warnings.append("无源/目标IP实体，该告警将独立建Case（无候选可汇入）")
 
         extra = {
             k: v for k, v in raw.items()
@@ -163,16 +178,37 @@ class SchemaMapper:
             protocol=str(getf("protocol")) if getf("protocol") else None,
             raw_log=str(getf("raw_log")) if getf("raw_log")
                     else json.dumps(raw, ensure_ascii=False),
+            entities=entities,
             extra=extra, warnings=warnings,
         )
         return alert, warnings
+
+    def _extract_entities(self, raw: dict, profile: dict) -> dict[str, str]:
+        """按profile路径提取类型化实体并规范化（issue #44）
+
+        归一责任默认数据源侧（日志中心）；引擎侧统一小写防同实体裂键，
+        host 可选 entity_short_name 做 FQDN→短名。
+        """
+        entities: dict[str, str] = {}
+        for etype, path in (profile.get("entities") or {}).items():
+            if not path:
+                continue
+            value = get_nested(raw, str(path))
+            if value in (None, "", "-"):
+                continue
+            value = str(value).strip().lower()
+            if etype == "host" and self.entity_short_name:
+                value = value.split(".", 1)[0]
+            entities[etype] = value
+        return entities
 
     @staticmethod
     def _build_alert(**kwargs) -> Alert:
         warnings = kwargs.pop("warnings", [])
         extra = kwargs.pop("extra", {})
+        entities = kwargs.pop("entities", {}) or {}
         extra["_mapping_warnings"] = warnings
-        return Alert(enriched_data=extra, **kwargs)
+        return Alert(entities=entities, enriched_data=extra, **kwargs)
 
     # ---- 严重度：自定义映射 > 文本枚举 > 数值阈值 ----
 

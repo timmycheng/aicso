@@ -35,7 +35,7 @@ LATENCY_P99_TARGET_MS = 1000
 class FailingClient:
     """演练用：模拟 System One 持续不可用"""
 
-    async def system_one(self, state, questions):
+    async def system_one(self, state, questions, timeout_ms=None):
         raise SystemOneUnavailableError("演练注入：服务不可用")
 
     async def aclose(self):
