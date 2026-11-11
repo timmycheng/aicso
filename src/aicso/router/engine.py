@@ -11,8 +11,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 import structlog
@@ -47,15 +49,37 @@ from aicso.store.case_store import CaseStore
 from aicso.store.routing_store import RoutingDecisionStore
 from aicso.systemone.client import (
     Choice,
+    InvalidRequestError,
     Noul,
     SystemOneClient,
     SystemOneError,
+    SystemOneResponse,
 )
 
 logger = structlog.get_logger()
 
-# 单请求 token 预算上限（64k 留 8% 余量）
-TOKEN_BUDGET = 60000
+
+def estimate_tokens(text: str) -> int:
+    """粗估请求token数：CJK≈1/字符、ASCII≈1/3字符、+8余量（issue #42）
+
+    上界偏保守——宁可切小批不可422。仅用于微批切分预算，非计费用。
+    """
+    if not text:
+        return 8
+    cjk = sum(1 for ch in text if "\u4e00" <= ch <= "\u9fff")
+    return 8 + cjk + (len(text) - cjk) // 3
+
+
+@dataclass
+class _S1Item:
+    """单条System One判定项：批内构建/token预算切分/422二分的单元（issue #42）"""
+    name: str
+    alert: Alert
+    candidates: list
+    question: Choice
+    state: str
+    criteria_keys: list
+    est_tokens: int
 
 
 class RouterEngine:
@@ -225,53 +249,113 @@ class RouterEngine:
         self, pending: list[tuple[Alert, list]]
     ) -> list[RoutingDecision]:
         started_all = time.monotonic()
-        questions: dict[str, Choice] = {}
-        criteria_map: dict[str, list[str]] = {}
+        decisions: list[RoutingDecision] = []
+        for sub in self._split_by_token_budget(pending):
+            decisions.extend(await self._route_system_one_sub(sub, started_all))
+        return decisions
 
-        for i, (alert, candidates) in enumerate(pending):
-            name = f"alert_{i}"
-            # 判定证据：候选Case附实体摘要（源/目标IP），让模型有据可判
-            # 而非仅凭同名标题（issue #31）
-            criteria = {}
-            for slot in candidates:
-                evidence = _entity_evidence(slot.entity_keys)
-                criteria[slot.case_id] = f"{slot.to_summary()}｜实体: {evidence}"
-            criteria["__new__"] = "与现有事件均无实体关联，应新建独立事件"
-            criteria_map[name] = list(criteria.keys())
-            questions[name] = Choice(
-                instructions=(
-                    f"这是第{i + 1}条安全告警。判断它应汇入哪个已有的安全事件(Case)。"
-                    "判定依据：告警的源/目标IP与候选事件实体是否重叠、是否明显属于同一攻击链。"
-                    "注意：仅攻击类型或规则名相同不是合并理由——不同源不同目标的同类攻击应新建独立事件。"
-                    "若所有候选均无实体关联，选 __new__。"
-                ),
-                criteria=criteria,
-            )
+    def _split_by_token_budget(
+        self, pending: list[tuple[Alert, list]]
+    ) -> list[list[_S1Item]]:
+        """按token预算切子批（issue #42）
 
-        state = "\n\n".join(
-            self._compact_state(alert) for alert, _ in pending
+        batch_max_alerts只限条数——真实SIEM告警的候选上下文远大于合成告警，
+        固定条数批会超模型上下文（65536）触发422→整流静默降级（#42根因）。
+        现以估算token为硬约束切批；单条估算即超预算的保持独立子批，
+        由422二分与单条兜底接手。
+        """
+        items = [self._build_s1_item(f"alert_{i}", i, alert, candidates)
+                 for i, (alert, candidates) in enumerate(pending)]
+        subs: list[list[_S1Item]] = []
+        cur: list[_S1Item] = []
+        cur_tokens = 0
+        for item in items:
+            if cur and cur_tokens + item.est_tokens > self.scfg.token_budget:
+                subs.append(cur)
+                cur, cur_tokens = [], 0
+            cur.append(item)
+            cur_tokens += item.est_tokens
+        if cur:
+            subs.append(cur)
+        return subs
+
+    def _build_s1_item(self, name: str, idx: int, alert: Alert, candidates: list) -> _S1Item:
+        # 判定证据：候选Case附实体摘要（源/目标IP），让模型有据可判
+        # 而非仅凭同名标题（issue #31）
+        criteria = {}
+        for slot in candidates:
+            evidence = _entity_evidence(slot.entity_keys)
+            criteria[slot.case_id] = f"{slot.to_summary()}｜实体: {evidence}"
+        criteria["__new__"] = "与现有事件均无实体关联，应新建独立事件"
+        question = Choice(
+            instructions=(
+                f"这是第{idx + 1}条安全告警。判断它应汇入哪个已有的安全事件(Case)。"
+                "判定依据：告警的源/目标IP与候选事件实体是否重叠、是否明显属于同一攻击链。"
+                "注意：仅攻击类型或规则名相同不是合并理由——不同源不同目标的同类攻击应新建独立事件。"
+                "若所有候选均无实体关联，选 __new__。"
+            ),
+            criteria=criteria,
         )
+        state = self._compact_state(alert)
+        est_tokens = (estimate_tokens(question.instructions)
+                      + estimate_tokens(json.dumps(criteria, ensure_ascii=False))
+                      + estimate_tokens(state))
+        return _S1Item(name=name, alert=alert, candidates=candidates,
+                       question=question, state=state,
+                       criteria_keys=list(criteria.keys()), est_tokens=est_tokens)
 
+    async def _call_split_on_overflow(self, items: list[_S1Item]) -> SystemOneResponse:
+        """422上下文溢出→二分切半重试（issue #42）；单条仍溢出交上层兜底"""
+        assert self._client is not None
+        state = "\n\n".join(it.state for it in items)
+        questions = {it.name: it.question for it in items}
+        try:
+            response = await self._client.system_one(state=state, questions=questions)
+        except InvalidRequestError as e:
+            if e.status_code != 422 or len(items) <= 1:
+                raise
+            self.metrics.systemone_split_total += 1
+            logger.warning("router.systemone_overflow_split", questions=len(items))
+            mid = len(items) // 2
+            left = await self._call_split_on_overflow(items[:mid])
+            right = await self._call_split_on_overflow(items[mid:])
+            return SystemOneResponse(
+                model=left.model, answers={**left.answers, **right.answers},
+                input_tokens=left.input_tokens + right.input_tokens,
+                output_tokens=left.output_tokens + right.output_tokens,
+            )
+        self.metrics.systemone_requests_total += 1
+        self.metrics.systemone_tokens_total += response.input_tokens
+        return response
+
+    async def _route_system_one_sub(
+        self, items: list[_S1Item], started_all: float
+    ) -> list[RoutingDecision]:
         try:
             assert self._client is not None
-            response = await self._client.system_one(state=state, questions=questions)
+            response = await self._call_split_on_overflow(items)
+        except InvalidRequestError as e:
+            if e.status_code == 422:
+                # 单条上下文仍超限：该条走兜底，不拖累全局降级（issue #42）
+                self.metrics.systemone_oversized_total += len(items)
+                logger.warning("router.systemone_question_oversized",
+                               batch_size=len(items), error=str(e))
+                return [await self._route_fallback_one(it.alert, started_all, it.candidates)
+                        for it in items]
+            raise
         except SystemOneError as e:
             self.metrics.systemone_errors_total += 1
             logger.warning("router.systemone_failed_enter_degraded",
-                           error=str(e), batch_size=len(pending))
+                           error=str(e), batch_size=len(items))
             self._enter_degraded()
             # 该批全部走兜底
-            return [
-                await self._route_fallback_one(alert, started_all, candidates)
-                for alert, candidates in pending
-            ]
-
-        self.metrics.systemone_requests_total += 1
-        self.metrics.systemone_tokens_total += response.input_tokens
+            return [await self._route_fallback_one(it.alert, started_all, it.candidates)
+                    for it in items]
 
         decisions: list[RoutingDecision] = []
-        for i, (alert, candidates) in enumerate(pending):
-            name = f"alert_{i}"
+        for item in items:
+            name = item.name
+            alert, candidates = item.alert, item.candidates
             answer = response.answers.get(name)
             started = time.monotonic()
             if answer is None:
@@ -283,7 +367,7 @@ class RouterEngine:
 
             confidence = answer.confidence or 0.0
             choice = answer.choice
-            valid_keys = criteria_map[name]
+            valid_keys = item.criteria_keys
             if choice not in valid_keys:
                 # 模型给了无效选项，保守新建
                 choice = "__new__"
