@@ -173,6 +173,7 @@ class Database:
                 protocol TEXT,
                 raw_log TEXT,
                 enriched_data TEXT DEFAULT '{}',
+                entities TEXT DEFAULT '{}',
                 case_id TEXT REFERENCES cases(case_id),
                 is_false_positive BOOLEAN DEFAULT FALSE,
                 routed_at TIMESTAMP,
@@ -273,7 +274,8 @@ class Database:
     async def _migrate_columns(self) -> None:
         """存量库列迁移：CREATE TABLE IF NOT EXISTS 不会给旧表加新列"""
         migrations = {
-            "alerts": ["routed_at TIMESTAMP", "routing_source TEXT"],
+            "alerts": ["routed_at TIMESTAMP", "routing_source TEXT",
+                       "entities TEXT DEFAULT '{}'"],
             "cases": ["merged_into TEXT", "split_from TEXT"],
         }
         for table, columns in migrations.items():

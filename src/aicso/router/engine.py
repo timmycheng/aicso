@@ -109,6 +109,7 @@ class RouterEngine:
             entity_types=set(routing_config.entity_types),
         )
         self.fallback = LocalFallback(
+            window_minutes=routing_config.pair_window_minutes,
             weak_auto_merge=routing_config.weak_entity_auto_merge)
         self.metrics = RouterMetrics()
 
