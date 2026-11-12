@@ -109,6 +109,9 @@ class RoutingConfig(BaseModel):
     # pair 即时粗分窗口（分钟）——窗口过期≠事件结束，只代表即时聚类阶段结束，
     # 长时攻击的后续关联由合并/拆分层整体兜底（issue #48）
     pair_window_minutes: int = 10
+    # 误报签名记忆时长（小时，#51处置反馈）：分析师标记误报后，同签名
+    # 告警在窗口内自动标记误报不再建case；过期后恢复正常路由
+    fp_ttl_hours: int = 168
     queue_max_size: int = 10000
     high_water_mark: float = 0.8   # 水位≥80%: 告警+指标
     overload_mark: float = 0.95    # 水位≥95%: 过载模式，本地兜底接管

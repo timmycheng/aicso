@@ -86,6 +86,8 @@ class MergeSplitEngine:
         self.scfg = scfg
         self.index = index
         self.fallback = fallback
+        # 人工处置样本（#51）：最贵的标注数据，作为few-shot证据进后续裁决
+        self.disposition_samples: list[dict] = []
 
     # ---- 候选发现 ----
 
@@ -216,6 +218,12 @@ class MergeSplitEngine:
             f"两事件共享实体：{entity_desc}\n"
             "两者由告警分流产生，请判断是否为同一真实事件。"
         )
+        # 人工处置样本作为few-shot证据（#51）：人怎么判沉淀为模型怎么判的上下文
+        hints = self._matching_dispositions(shared_entities)
+        if hints:
+            refs = "\n".join(
+                f"- {h['ts'][:19]} 人工合并（{h['reason'] or '未注明理由'}）" for h in hints)
+            state += f"\n\n历史人工处置参考（相似实体的既往人工结论）：\n{refs}"
         try:
             response = await self._client.system_one(
                 state=state,
@@ -262,11 +270,14 @@ class MergeSplitEngine:
     # ---- 合并执行（幂等） ----
 
     async def merge(self, primary_id: str, absorbed_id: str, reason: str = "",
-                    evidence: dict | None = None) -> dict:
+                    evidence: dict | None = None,
+                    actor: str = "system") -> dict:
         """主Case吸收被并Case。幂等：absorbed已有merged_into时跳过。
 
         evidence: 关联证据链（#48）——共享实体分类/时间跨度/告警画像，
         写入双方时间线事件，审计可回溯"为什么关联"。
+        actor="human"（#51）：人工合并沉淀为处置样本，作为后续裁决的
+        few-shot证据；system自动合并不沉淀（那是模型自己的结论）。
         """
         if primary_id == absorbed_id:
             return {"ok": False, "reason": "same_case"}
@@ -301,13 +312,39 @@ class MergeSplitEngine:
         # 交互频次操作：flush保证重定向立即可读（幂等键依赖该字段）
         await self.case_store.db.flush()
 
+        if actor == "human":
+            # 先于deactivate：absorbed实体尚在索引，处置样本才带得上实体
+            self._record_disposition(primary_id, absorbed_id, reason, evidence)
+
         # 路由状态清理：被并Case退出候选（重启重建由merged_into过滤兜底）
         self.index.deactivate(absorbed_id)
         self.fallback.deactivate(absorbed_id)
 
         logger.info("merge.executed", primary=primary_id, absorbed=absorbed_id,
-                    alerts_moved=moved)
+                    alerts_moved=moved, actor=actor)
         return {"ok": True, "alerts_moved": moved}
+
+    def _record_disposition(self, primary_id: str, absorbed_id: str,
+                            reason: str, evidence: dict | None) -> None:
+        """沉淀人工处置样本（#51）：实体/结论/理由，供裁决上下文检索"""
+        shared = sorted(set(self.index.case_entities(primary_id))
+                        & set(self.index.case_entities(absorbed_id)))
+        self.disposition_samples.append({
+            "ts": datetime.utcnow().isoformat(),
+            "primary": primary_id,
+            "absorbed": absorbed_id,
+            "shared": shared,
+            "reason": reason,
+        })
+        del self.disposition_samples[:-100]
+
+    def _matching_dispositions(self, shared_entities: list[str]) -> list[dict]:
+        """按共享实体检索相关处置样本（上限3条，防token膨胀）"""
+        keys = set(shared_entities or [])
+        if not keys:
+            return []
+        hits = [s for s in self.disposition_samples if keys & set(s["shared"])]
+        return hits[-3:]
 
     # ---- 拆分执行 ----
 
@@ -431,6 +468,50 @@ class MergeSplitEngine:
         return evaluations
 
     # ---- 内部 ----
+
+    async def entity_survival_report(self) -> dict:
+        """实体类型存活率报告（issue #51，报告-only：白名单调整仍人工拍板）
+
+        存活 = 因共享某类实体合并且事后未被拆分。被拆开率高→该类型
+        在本环境弱，建议（不自动）从entity_types降权。
+        """
+        rows = await self.case_store.db.fetch_all(
+            """SELECT case_id, event_type, detail FROM case_events
+               WHERE event_type IN ('case_merged', 'case_split')
+               ORDER BY timestamp ASC""",
+        )
+        merged: dict[str, int] = {}
+        split: dict[str, int] = {}
+        case_merge_types: dict[str, set[str]] = {}
+        for row in rows:
+            detail = row["detail"]
+            if isinstance(detail, str):
+                try:
+                    detail = json.loads(detail)
+                except (json.JSONDecodeError, TypeError):
+                    detail = {}
+            if row["event_type"] == "case_merged":
+                keys = (detail or {}).get("evidence", {}).get("shared_entity_keys") or []
+                types = {k.split(":", 1)[0] for k in keys}
+                for t in types:
+                    merged[t] = merged.get(t, 0) + 1
+                case_merge_types.setdefault(row["case_id"], set()).update(types)
+            else:  # case_split：原case此前因哪些实体合并过→这些类型被拆分
+                for t in case_merge_types.get(row["case_id"], set()):
+                    split[t] = split.get(t, 0) + 1
+        types = sorted(set(merged) | set(split))
+        report = {}
+        for t in types:
+            m, s = merged.get(t, 0), split.get(t, 0)
+            report[t] = {
+                "merged": m, "split": s,
+                "survival": round(1 - s / m, 2) if m else None,
+            }
+        return {
+            "generated_at": datetime.utcnow().isoformat(),
+            "note": "报告only——entity_types白名单调整由人工拍板（#51）",
+            "types": report,
+        }
 
     async def _add_event(self, case_id: str, event_type: str, detail: dict) -> None:
         from aicso.models.case import CaseEvent

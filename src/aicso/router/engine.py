@@ -37,6 +37,7 @@ from aicso.models.routing import (
     ROUTE_TO,
     SRC_CACHE,
     SRC_FALLBACK,
+    SRC_FALSE_POSITIVE,
     SRC_SYSTEM_ONE,
     RoutingDecision,
 )
@@ -127,6 +128,9 @@ class RouterEngine:
         self._running = False
         # 决策缓存: signature -> (case_id, ts)
         self._cache: dict[str, tuple[str, datetime]] = {}
+        # 误报签名记忆（#51处置反馈）：签名 → (命中次数, 过期时间)
+        self.fp_signatures: dict[str, tuple[int, datetime]] = {}
+        self.fp_ttl = timedelta(hours=routing_config.fp_ttl_hours)
 
     # ---- 生命周期 ----
 
@@ -212,6 +216,21 @@ class RouterEngine:
         for alert in batch:
             started = time.monotonic()
             entity_keys = entity_keys_of(alert)
+
+            # 0. 误报签名命中（#51处置反馈）：分析师已判误报→免路由不建case
+            if self.is_false_positive(alert):
+                self.metrics.fp_total += 1
+                await self.alert_store.mark_false_positive(alert.alert_id)
+                count, _ = self.fp_signatures.get(entity_signature(alert), (0, None))
+                decisions.append(RoutingDecision(
+                    alert_id=alert.alert_id, case_id="",
+                    decision=NEW_CASE, source=SRC_FALSE_POSITIVE,
+                    latency_ms=(time.monotonic() - started) * 1000,
+                    detail={"false_positive": True, "signature_hits": count},
+                ))
+                logger.info("router.false_positive_hit", alert_id=alert.alert_id,
+                            hits=count)
+                continue
 
             # 1. 决策缓存
             cached = self._cache_lookup(alert)
@@ -622,6 +641,27 @@ class RouterEngine:
 
     def _cache_store(self, alert: Alert, case_id: str) -> None:
         self._cache[entity_signature(alert)] = (case_id, datetime.utcnow())
+
+    # ---- 误报签名记忆（#51处置反馈） ----
+
+    def record_false_positive(self, alert: Alert) -> int:
+        """分析师标记误报：记忆签名，窗口内同签名告警免路由（TTL见fp_ttl_hours）"""
+        sig = entity_signature(alert)
+        count, _ = self.fp_signatures.get(sig, (0, datetime.utcnow()))
+        count += 1
+        self.fp_signatures[sig] = (count, datetime.utcnow() + self.fp_ttl)
+        return count
+
+    def is_false_positive(self, alert: Alert) -> bool:
+        sig = entity_signature(alert)
+        entry = self.fp_signatures.get(sig)
+        if entry is None:
+            return False
+        _count, expires = entry
+        if datetime.utcnow() > expires:
+            del self.fp_signatures[sig]   # 过期惰性清理
+            return False
+        return True
 
     # ---- 降级与恢复 ----
 
