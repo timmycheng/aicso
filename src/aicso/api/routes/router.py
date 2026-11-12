@@ -1,6 +1,7 @@
 """分流路由管理页面 — 替代原 /aggregator（不再读私有属性，走引擎公开接口）"""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -59,7 +60,7 @@ async def api_merge_execute(request: Request, state: AppState = Depends(get_stat
     if not primary or not absorbed:
         return {"error": "primary/absorbed必填"}
     return await state.merge_engine.merge(
-        primary, absorbed, reason=body.get("reason", "manual"))
+        primary, absorbed, reason=body.get("reason", "manual"), actor="human")
 
 
 @router.post("/api/split")
@@ -122,6 +123,36 @@ async def api_tuner_rollback(state: AppState = Depends(get_state)):
     if decision is None:
         return {"ok": False, "message": "无可回滚的调整"}
     return {"ok": True, "decision": vars(decision)}
+
+
+@router.post("/api/alerts/{alert_id}/false-positive")
+async def api_mark_false_positive(alert_id: str, request: Request,
+                                  state: AppState = Depends(get_state)):
+    """标记误报（issue #51）：记忆签名，窗口内同签名告警免路由不建case"""
+    row = await state.alert_store.get(alert_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="告警不存在")
+    from aicso.models.alert import Alert
+    from aicso.router.index import entity_signature
+    try:
+        entities = json.loads(row.get("entities") or "{}")
+    except (json.JSONDecodeError, TypeError):
+        entities = {}
+    alert = Alert(alert_id=row["alert_id"], source=row["source"],
+                  rule_id=row.get("rule_id"), rule_name=row.get("rule_name"),
+                  severity=row.get("severity"), src_ip=row.get("src_ip"),
+                  dst_ip=row.get("dst_ip"), entities=entities)
+    hits = state.router.record_false_positive(alert)
+    await state.alert_store.mark_false_positive(alert_id)
+    return {"ok": True, "signature": entity_signature(alert),
+            "signature_hits": hits,
+            "ttl_hours": state.router.fp_ttl.total_seconds() / 3600}
+
+
+@router.get("/api/entity-survival")
+async def api_entity_survival(state: AppState = Depends(get_state)):
+    """实体类型存活率报告（issue #51，报告only）：白名单调整由人工拍板"""
+    return await state.merge_engine.entity_survival_report()
 
 
 @router.get("/api/decisions")

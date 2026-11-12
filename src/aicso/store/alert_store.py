@@ -83,6 +83,16 @@ class AlertStore:
         await self.db.commit()
         return cursor.rowcount
 
+    async def mark_false_positive(self, alert_id: str) -> bool:
+        """标记误报（#51处置反馈）：is_false_positive + 路由来源可审计"""
+        cursor = await self.db.execute(
+            "UPDATE alerts SET is_false_positive = TRUE, routed_at = ?, "
+            "routing_source = 'false_positive' WHERE alert_id = ?",
+            (datetime.utcnow().isoformat(), alert_id),
+        )
+        await self.db.commit()
+        return bool(cursor and cursor.rowcount)
+
     async def list_unrouted(self, limit: int = 10000) -> list[dict]:
         """未路由告警（重启回灌用，§5.6）"""
         return await self.db.fetch_all(

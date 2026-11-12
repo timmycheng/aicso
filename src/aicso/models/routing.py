@@ -12,6 +12,7 @@ NEW_CASE = "new_case"      # 新建Case
 SRC_SYSTEM_ONE = "system_one"  # System One 判定
 SRC_CACHE = "cache"            # 决策缓存复用
 SRC_FALLBACK = "fallback"      # 本地兜底规则
+SRC_FALSE_POSITIVE = "false_positive"  # 误报签名命中（#51处置反馈）
 
 
 @dataclass
