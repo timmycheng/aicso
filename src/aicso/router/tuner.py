@@ -128,14 +128,16 @@ class ParamTuner:
             self.scfg.timeout_scale = float(decision.new)
 
     def rollback(self) -> TunerDecision | None:
-        """一键回滚最近一次调整（审计可见，冷却期照常生效）"""
+        """一键回滚最近一次调整（审计可见，冷却期照常生效）
+
+        回滚弹出该决策而非追加回滚记录——追加会让第二次回滚把第一次
+        回滚反向撤销，在两值间震荡（review #56发现）。
+        """
         if not self.history:
             return None
-        last = self.history[-1]
+        last = self.history.pop()
         decision = TunerDecision(last.param, last.new, last.old, "人工回滚")
         self.apply(decision)
-        self.history.append(decision)
-        del self.history[:-HISTORY_MAX]
         self._cooldown = COOLDOWN_CYCLES
         logger.info("tuner.rolled_back", param=decision.param,
                     to=decision.new)

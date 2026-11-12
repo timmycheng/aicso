@@ -13,7 +13,14 @@ class WriteBuffer:
     """批量写入缓冲区，攒批后统一 commit
 
     每 flush_interval 秒或攒满 batch_size 条（先到者）flush 一次。
+    flush 失败不丢批：回滚半执行状态后重试，整批重试超限则二分隔离
+    毒语句（对齐 systemone client 422 二分惯例），单语句反复失败才
+    落死信日志丢弃——路由热路径的 mark_routed/建Case/审计都走这里，
+    静默丢批 = 静默丢告警（review #56 发现2）。
     """
+
+    # 单语句最大重试次数；整批达到后二分
+    MAX_BATCH_ATTEMPTS = 3
 
     def __init__(
         self,
@@ -24,11 +31,13 @@ class WriteBuffer:
         self._db = db
         self._batch_size = batch_size
         self._flush_interval = flush_interval
-        self._buffer: list[tuple[str, tuple]] = []
+        self._buffer: list[tuple[str, tuple, int]] = []
         self._lock = asyncio.Lock()
         self._flush_event = asyncio.Event()
         self._task: asyncio.Task | None = None
         self._running = False
+        self.flush_failures = 0
+        self.dropped_total = 0
 
     def start(self) -> None:
         if self._task is None:
@@ -48,7 +57,7 @@ class WriteBuffer:
 
     async def add(self, sql: str, params: tuple) -> None:
         async with self._lock:
-            self._buffer.append((sql, params))
+            self._buffer.append((sql, params, 0))
             if len(self._buffer) >= self._batch_size:
                 self._flush_event.set()
 
@@ -58,16 +67,47 @@ class WriteBuffer:
                 return 0
             batch = self._buffer
             self._buffer = []
+        return await self._execute_batch(batch)
 
+    async def _execute_batch(self, batch: list[tuple[str, tuple, int]]) -> int:
         try:
-            for sql, params in batch:
+            for sql, params, _attempt in batch:
                 await self._db.execute(sql, params)
             await self._db.commit()
-            logger.debug("db.batch_flush", count=len(batch))
             return len(batch)
         except Exception:
-            logger.error("db.batch_flush_failed", count=len(batch), exc_info=True)
-            raise
+            # 回滚半执行状态：不回滚的话下次flush会重执行已执行语句，
+            # 对带主键的INSERT产生IntegrityError形成毒批
+            # 注意：连接级rollback也会丢弃同时打开事务里的直写语句
+            # （如AlertStore.create）——该窗口极小，且告警可由数据源重投兜底
+            try:
+                await self._db.rollback()
+            except Exception:
+                pass
+            self.flush_failures += 1
+            retried = [(sql, p, a + 1) for sql, p, a in batch]
+            if len(retried) > 1 and all(a >= self.MAX_BATCH_ATTEMPTS for _, _, a in retried):
+                # 整批反复失败：递归二分就地执行——不能只把两半塞回队列，
+                # 下一次flush会把相邻的两半又合成一批整体执行，隔离永不生效
+                mid = len(retried) // 2
+                logger.error("db.batch_flush_split", count=len(retried))
+                left = await self._execute_batch(retried[:mid])
+                right = await self._execute_batch(retried[mid:])
+                return left + right
+            if len(retried) == 1 and retried[0][2] >= self.MAX_BATCH_ATTEMPTS:
+                # 单语句隔离后仍失败：毒语句落死信日志丢弃，不阻塞后续写入
+                self.dropped_total += 1
+                logger.error(
+                    "db.batch_dead_letter", sql=retried[0][0][:200], attempts=retried[0][2]
+                )
+                return 0
+            await self._requeue(retried)
+            logger.error("db.batch_flush_retry", count=len(retried), exc_info=True)
+            return 0
+
+    async def _requeue(self, items: list[tuple[str, tuple, int]]) -> None:
+        async with self._lock:
+            self._buffer[:0] = items
 
     async def _flush_loop(self) -> None:
         while self._running:
@@ -87,7 +127,8 @@ class WriteBuffer:
 class Database:
     """SQLite异步数据库管理器"""
 
-    def __init__(self, db_path: str = "aicso.db", profile: str = "sqlite"):
+    def __init__(self, db_path: str = "aicso.db", profile: str = "sqlite",
+                 url: str | None = None):
         # 存储profile缝（设计§12）：当前仅sqlite实现；
         # postgres/ClickHouse profile 接入时在此工厂分派（issue #10）
         if profile != "sqlite":
@@ -96,11 +137,25 @@ class Database:
                 "postgres/ClickHouse 接入见 docs/REFACTOR_DESIGN.md §12"
             )
         self.profile = profile
+        # url 优先于 db_path（此前 config.database.url 是死配置：
+        # config 写了 url 但装配只传 profile，路径硬编码 aicso.db，
+        # review #56发现44）。兼容 sqlite:/// 与 sqlite+aiosqlite:/// 前缀
+        if url:
+            for prefix in ("sqlite+aiosqlite:///", "sqlite:///"):
+                if url.startswith(prefix):
+                    db_path = url[len(prefix):]
+                    break
         self.db_path = db_path
         self._db: aiosqlite.Connection | None = None
         self._write_buffer: WriteBuffer | None = None
 
     async def connect(self) -> None:
+        # url指向子目录（如./data/aicso.db）时自动创建，避免开箱连接失败
+        import os
+
+        parent = os.path.dirname(self.db_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
         self._db = await aiosqlite.connect(self.db_path)
         self._db.row_factory = aiosqlite.Row
         await self._db.execute("PRAGMA journal_mode=WAL")
@@ -298,6 +353,11 @@ class Database:
         if self._db is None:
             raise RuntimeError("Database not connected. Call connect() first.")
         return self._db
+
+    @property
+    def buffering(self) -> bool:
+        """是否启用了写缓冲（决定直写路径是否需要自行commit）"""
+        return self._write_buffer is not None
 
     async def execute(self, sql: str, params: tuple = ()) -> aiosqlite.Cursor:
         return await self.db.execute(sql, params)

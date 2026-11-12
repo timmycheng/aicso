@@ -33,6 +33,7 @@ from aicso.models.case import (
     CaseStatus,
 )
 from aicso.models.routing import (
+    FALSE_POSITIVE,
     NEW_CASE,
     ROUTE_TO,
     SRC_CACHE,
@@ -70,6 +71,31 @@ def estimate_tokens(text: str) -> int:
         return 8
     cjk = sum(1 for ch in text if "\u4e00" <= ch <= "\u9fff")
     return 8 + cjk + (len(text) - cjk) // 3
+
+
+def _parse_iso_ts(value) -> datetime | None:
+    """DB TIMESTAMP 列（ISO字符串）→ datetime；失败返回None（用Alert默认值）"""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    try:
+        return datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+
+
+def _parse_entities(value) -> dict:
+    """alerts.entities JSON列 → dict；损坏返回空"""
+    if not value:
+        return {}
+    if isinstance(value, dict):
+        return value
+    try:
+        parsed = json.loads(value)
+        return parsed if isinstance(parsed, dict) else {}
+    except (TypeError, ValueError):
+        return {}
 
 
 @dataclass
@@ -121,6 +147,9 @@ class RouterEngine:
             max_size=routing_config.queue_max_size,
         )
         self._degraded = self._client is None
+        # 过载模式（§5.7三级水位第95%档）：新到告警直接本地兜底，
+        # 水位回落到高水位以下恢复S1（review #56发现10）
+        self._overload = False
         self._worker_task: asyncio.Task | None = None
         self._probe_task: asyncio.Task | None = None
         self._tuner: ParamTuner | None = None
@@ -128,6 +157,7 @@ class RouterEngine:
         self._running = False
         # 决策缓存: signature -> (case_id, ts)
         self._cache: dict[str, tuple[str, datetime]] = {}
+        self._cache_writes = 0
         # 误报签名记忆（#51处置反馈）：签名 → (命中次数, 过期时间)
         self.fp_signatures: dict[str, tuple[int, datetime]] = {}
         self.fp_ttl = timedelta(hours=routing_config.fp_ttl_hours)
@@ -166,16 +196,27 @@ class RouterEngine:
     # ---- 入口 ----
 
     async def submit(self, alert: Alert) -> bool:
-        """告警入路由队列；队列满时立即走本地兜底（不阻塞上游、不丢告警）"""
+        """告警入路由队列；过载走兜底、队列满立即兜底（不阻塞上游、不丢告警）"""
         self.metrics.submitted_total += 1
         if self.metrics.oldest_pending_since is None:
             self.metrics.oldest_pending_since = datetime.utcnow()
-        if self._batcher.qsize() >= self.rcfg.queue_max_size * self.rcfg.high_water_mark:
+        qsize = self._batcher.qsize()
+        if self._overload and qsize < self.rcfg.queue_max_size * self.rcfg.high_water_mark:
+            self._overload = False
+            logger.info("router.overload_cleared", depth=qsize)
+        elif not self._overload and qsize >= self.rcfg.queue_max_size * self.rcfg.overload_mark:
+            self._overload = True
+            self.metrics.queue_overload_events += 1
+            logger.warning("router.overload_mode_enter", depth=qsize)
+        if qsize >= self.rcfg.queue_max_size * self.rcfg.high_water_mark:
             self.metrics.queue_high_water_events += 1
-            logger.warning("router.queue_high_water", depth=self._batcher.qsize())
-        if not self._batcher.try_put(alert):
-            # 过载：兜底立即决策，绝不丢弃
-            logger.warning("router.queue_full_fallback", alert_id=alert.alert_id)
+            logger.warning("router.queue_high_water", depth=qsize)
+        # 过载模式（≥95%）：时延优先，本地兜底接管；100%队列满同路径
+        if self._overload or not self._batcher.try_put(alert):
+            logger.warning(
+                "router.queue_full_fallback",
+                alert_id=alert.alert_id, overload=self._overload,
+            )
             await self._route_fallback_batch([alert])
             return False
         return True
@@ -189,8 +230,8 @@ class RouterEngine:
                 batch.append(self._batcher.get_nowait())
             if batch:
                 decisions.extend(await self._route_batch(batch))
-        if self.metrics.routed_total:
-            self.metrics.oldest_pending_since = None
+        # flush 排空到队列为空才清积压锚点（每批清零会让积压观测失真，#56发现11）
+        self.metrics.oldest_pending_since = None
         return decisions
 
     async def _worker(self) -> None:
@@ -209,7 +250,36 @@ class RouterEngine:
     # ---- 核心路由 ----
 
     async def _route_batch(self, batch: list[Alert]) -> list[RoutingDecision]:
-        """一批告警的路由主流程：缓存 → 候选 → System One → 应用"""
+        """一批告警的路由主流程：缓存 → 候选 → System One → 应用
+
+        外层兜底网：中途异常时，已出队未路由的告警走本地兜底，
+        绝不静默滞留（§2零丢弃；此前worker异常吞整批，review #56发现5）。
+        """
+        decisions: list[RoutingDecision] = []
+        try:
+            decisions.extend(await self._route_batch_decide(batch))
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            routed_ids = {d.alert_id for d in decisions}
+            remaining = [a for a in batch if a.alert_id not in routed_ids]
+            logger.error("router.batch_error_fallback",
+                         remaining=len(remaining), exc_info=True)
+            started = time.monotonic()
+            for alert in remaining:
+                try:
+                    decisions.append(await self._route_fallback_one(alert, started, []))
+                except Exception:
+                    # 兜底也失败（如DB不可写）：留待重启backfill回灌
+                    logger.error("router.fallback_route_failed",
+                                 alert_id=alert.alert_id, exc_info=True)
+        finally:
+            # 队列排空才清积压锚点——每批清零会让高积压时指标显示无积压（§5.8）
+            if self._batcher.empty():
+                self.metrics.oldest_pending_since = None
+        return decisions
+
+    async def _route_batch_decide(self, batch: list[Alert]) -> list[RoutingDecision]:
         decisions: list[RoutingDecision] = []
         pending: list[tuple[Alert, list]] = []  # 需要System One判定的
 
@@ -224,12 +294,14 @@ class RouterEngine:
                 count, _ = self.fp_signatures.get(entity_signature(alert), (0, None))
                 decisions.append(RoutingDecision(
                     alert_id=alert.alert_id, case_id="",
-                    decision=NEW_CASE, source=SRC_FALSE_POSITIVE,
+                    decision=FALSE_POSITIVE, source=SRC_FALSE_POSITIVE,
                     latency_ms=(time.monotonic() - started) * 1000,
                     detail={"false_positive": True, "signature_hits": count},
                 ))
                 logger.info("router.false_positive_hit", alert_id=alert.alert_id,
                             hits=count)
+                # FP决策同样落审计（此前跳过_finalize，routing_decisions无FP行，#56发现9）
+                self._finalize(decisions[-1])
                 continue
 
             # 1. 决策缓存
@@ -273,7 +345,6 @@ class RouterEngine:
         if pending:
             decisions.extend(await self._route_system_one(pending))
 
-        self.metrics.oldest_pending_since = None
         return decisions
 
     async def _route_system_one(
@@ -415,7 +486,8 @@ class RouterEngine:
 
             if choice == "__new__" or confidence < self.scfg.confidence_threshold:
                 low_conf = confidence < self.scfg.confidence_threshold
-                if low_conf and choice != "__new__":
+                if low_conf:
+                    # 与复核事件一一对应（含__new__低置信场景，#56发现13）
                     self.metrics.low_confidence_total += 1
                 decisions.append(await self._apply_new_case(
                     alert, RoutingDecision(
@@ -479,9 +551,13 @@ class RouterEngine:
     # ---- 决策应用 ----
 
     async def _apply_route(
-        self, alert: Alert, case_id: str, decision: RoutingDecision
+        self, alert: Alert, case_id: str, decision: RoutingDecision,
+        _depth: int = 0,
     ) -> RoutingDecision:
         """汇入已有Case：更新告警行 + Case时间线 + 索引活跃度"""
+        if _depth > 5:  # 合并链异常（环/过深）：保守新建
+            decision.detail["merge_chain_too_deep"] = True
+            return await self._apply_new_case(alert, decision)
         # 防御：索引不认识目标Case（外部清理/长期失联）→ 保守改走新建。
         # 索引成员判断即权威：新建Case先入索引后写库（写缓冲0.1s），避免
         # 缓冲窗口内同批告警路由到刚建的Case被误判不存在
@@ -494,6 +570,14 @@ class RouterEngine:
                 self.fallback.deactivate(case_id)
                 decision.detail["target_missing"] = case_id
                 return await self._apply_new_case(alert, decision)
+            if case_row.get("merged_into"):
+                # 已被合并的Case仍被缓存/兜底指向 → 改道主Case（§8"被并Case
+                # 停止活跃"；合并链限深防环）。_apply_route在缓存命中路径上，
+                # 不改道会让已并Case"复活"持续吸收告警（#56发现6）
+                decision.detail["redirected_from"] = case_id
+                return await self._apply_route(
+                    alert, case_row["merged_into"], decision, _depth=_depth + 1
+                )
             # DB里有但索引没有（如外部恢复的Case）→ 补进索引
             self.index.add_case(case_id, case_row.get("title", case_id), entity_keys_of(alert))
 
@@ -641,6 +725,27 @@ class RouterEngine:
 
     def _cache_store(self, alert: Alert, case_id: str) -> None:
         self._cache[entity_signature(alert)] = (case_id, datetime.utcnow())
+        # 高基数签名（src/dst/rule组合）大多只出现一两次，过期条目若仅靠
+        # "同签名再次出现"清除会单调增长——每128次写入做一次全量惰性清扫
+        self._cache_writes += 1
+        if self._cache_writes % 128 == 0:
+            self._cache_sweep()
+
+    def _cache_sweep(self) -> int:
+        """清掉全部过期缓存条目，返回清除数"""
+        ttl = timedelta(seconds=self.scfg.cache_ttl_seconds)
+        now = datetime.utcnow()
+        stale = [sig for sig, (_cid, ts) in self._cache.items() if now - ts > ttl]
+        for sig in stale:
+            del self._cache[sig]
+        return len(stale)
+
+    def invalidate_cache_for(self, case_id: str) -> int:
+        """merge后清缓存：指向被并Case的决策不再复用（防已并Case复活，#56发现6）"""
+        stale = [sig for sig, (cid, _ts) in self._cache.items() if cid == case_id]
+        for sig in stale:
+            del self._cache[sig]
+        return len(stale)
 
     # ---- 误报签名记忆（#51处置反馈） ----
 
@@ -691,17 +796,21 @@ class RouterEngine:
     # ---- 恢复（重启） ----
 
     async def rebuild_index_from_db(self) -> int:
-        """从DB活跃Case重建候选索引（§5.6：不依赖规则TTL语义，重建即正确）"""
+        """从DB活跃Case重建候选索引（§5.6：不依赖规则TTL语义，重建即正确）
+
+        读 alerts.entities 列重建弱实体槽位（§5.6明文"读alert实体列"）——
+        与热路径 entity_keys_of 口径一致，保证重启前后路由行为一致（#56发现8）。
+        """
         rows = await self.alert_store.db.fetch_all("""
             SELECT a.case_id, c.title AS summary,
-                   a.src_ip, a.dst_ip, a.rule_id,
+                   a.src_ip, a.dst_ip, a.rule_id, a.entities,
                    MAX(a.timestamp) AS last_seen, COUNT(*) AS hits
             FROM alerts a
             JOIN cases c ON c.case_id = a.case_id
             WHERE a.case_id IS NOT NULL
               AND c.status NOT IN ('resolved', 'closed')
               AND c.merged_into IS NULL
-            GROUP BY a.case_id, c.title, a.src_ip, a.dst_ip, a.rule_id
+            GROUP BY a.case_id, c.title, a.src_ip, a.dst_ip, a.rule_id, a.entities
         """)
         count = self.index.rebuild(rows)
         self.fallback.rebuild(rows)
@@ -709,21 +818,47 @@ class RouterEngine:
         return count
 
     async def backfill_unrouted(self) -> int:
-        """回灌未路由告警（routed_at IS NULL），重启零丢失"""
-        rows = await self.alert_store.list_unrouted(limit=self.rcfg.queue_max_size)
-        for row in rows:
-            alert = Alert(
-                alert_id=row["alert_id"], source=row["source"],
-                rule_id=row.get("rule_id"), rule_name=row.get("rule_name"),
-                severity=row.get("severity"), src_ip=row.get("src_ip"),
-                dst_ip=row.get("dst_ip"), src_port=row.get("src_port"),
-                dst_port=row.get("dst_port"), protocol=row.get("protocol"),
-                raw_log=row.get("raw_log"),
+        """回灌未路由告警（routed_at IS NULL），重启零丢失
+
+        先取存量快照再分页提交：快照界定工作量，不会因worker路由速度
+        跟不上而无限循环；提交前复查仍未路由，防与worker并发双路由。
+        """
+        snapshot = await self.alert_store.db.fetch_all(
+            "SELECT alert_id FROM alerts WHERE routed_at IS NULL AND case_id IS NULL"
+        )
+        ids = [r["alert_id"] for r in snapshot]
+        submitted = 0
+        for i in range(0, len(ids), max(self.rcfg.queue_max_size, 1)):
+            page_ids = ids[i:i + self.rcfg.queue_max_size]
+            placeholders = ",".join("?" * len(page_ids))
+            rows = await self.alert_store.db.fetch_all(
+                f"SELECT * FROM alerts WHERE alert_id IN ({placeholders})",
+                tuple(page_ids),
             )
-            await self.submit(alert)
-        if rows:
-            logger.info("router.backfilled", count=len(rows))
-        return len(rows)
+            for row in rows:
+                if row.get("routed_at") is not None or row.get("case_id") is not None:
+                    continue  # worker并发已路由
+                kwargs: dict = dict(
+                    alert_id=row["alert_id"], source=row["source"],
+                    rule_id=row.get("rule_id"), rule_name=row.get("rule_name"),
+                    severity=row.get("severity"), src_ip=row.get("src_ip"),
+                    dst_ip=row.get("dst_ip"), src_port=row.get("src_port"),
+                    dst_port=row.get("dst_port"), protocol=row.get("protocol"),
+                    raw_log=row.get("raw_log"),
+                    entities=_parse_entities(row.get("entities")),
+                )
+                ts = _parse_iso_ts(row.get("timestamp"))
+                if ts is not None:
+                    kwargs["timestamp"] = ts
+                created = _parse_iso_ts(row.get("created_at"))
+                if created is not None:
+                    kwargs["created_at"] = created
+                alert = Alert(**kwargs)
+                await self.submit(alert)
+                submitted += 1
+        if submitted:
+            logger.info("router.backfilled", count=submitted)
+        return submitted
 
     # ---- 展示 ----
 
@@ -731,6 +866,7 @@ class RouterEngine:
         return {
             "system_one_enabled": self._client is not None,
             "degraded": self._degraded,
+            "overload": self._overload,
             "queue_depth": self._batcher.qsize(),
             "queue_max": self.rcfg.queue_max_size,
             "cache_size": len(self._cache),

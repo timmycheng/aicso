@@ -9,14 +9,17 @@ services:
       - "8000:8000"
     volumes:
       - aicso_data:/app/data
-      - aicso_db:/app/aicso.db
       - ./config.yaml:/app/config.yaml:ro
       - ./playbooks:/app/playbooks:ro
     environment:
+      - XX-AI-KEY=${XX-AI-KEY:-}
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
     restart: unless-stopped
 
 volumes:
   aicso_data:
-  aicso_db:
+# 注意（review #56发现46）：不要把 named volume 挂到文件路径（如
+# aicso_db:/app/aicso.db）——目标在镜像内不存在时 Docker 会建目录，
+# SQLite 打开目录直接崩溃。DB 文件经 config.yaml 的 database.url 落在
+# /app/data/（本卷）内持久化。

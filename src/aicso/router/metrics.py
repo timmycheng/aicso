@@ -28,6 +28,7 @@ class RouterMetrics:
         self.systemone_timeout_errors_total = 0  # 请求超时类错误(#50微调器输入)
         self.fp_total = 0                # 误报签名命中免路由数(#51)
         self.queue_high_water_events = 0
+        self.queue_overload_events = 0   # 进入95%过载模式次数（§5.7）
         self.low_confidence_total = 0   # 低于阈值转复核
         self._latencies: deque[float] = deque(maxlen=latency_samples)
         self.oldest_pending_since: datetime | None = None  # 最老未路由告警入队时间
@@ -71,6 +72,7 @@ class RouterMetrics:
             "systemone_timeout_errors_total": self.systemone_timeout_errors_total,
             "fp_total": self.fp_total,
             "queue_high_water_events": self.queue_high_water_events,
+            "queue_overload_events": self.queue_overload_events,
             "queue_depth": queue_depth,
             "queue_max": queue_max,
             "backlog_age_ms": self.backlog_age_ms(),

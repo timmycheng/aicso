@@ -166,7 +166,7 @@ def case_update(
 async def _case_update(
     case_id: str, status: str | None, assignee: str | None, resolution: str | None
 ):
-    from aicso.models.case import CaseStatus
+    from aicso.models.case import Case, CaseStatus
     from aicso.store.case_store import CaseStore
     from aicso.store.database import Database
 
@@ -179,20 +179,17 @@ async def _case_update(
             console.print(f"[red]Case不存在: {case_id}[/]")
             return
 
-        from aicso.models.case import Case, CasePriority, CaseSeverity
-        case = Case(
-            case_id=case_data["case_id"],
-            title=case_data["title"],
-            severity=CaseSeverity(case_data["severity"]),
-            status=CaseStatus(case_data["status"]),
-            priority=CasePriority(case_data["priority"]),
-            assignee_id=case_data.get("assignee_id"),
-            resolution=case_data.get("resolution"),
-        )
+        # 从DB行重建完整Case（update是全列UPDATE，部分重建会抹掉
+        # tags/metadata/AI结论/SLA等字段——review #56发现1）
+        case = Case.from_row(case_data)
 
         if status:
-            new_status = CaseStatus(status)
-            event = case.transition_to(new_status, actor="cli_user", reason="CLI更新")
+            try:
+                new_status = CaseStatus(status)
+                event = case.transition_to(new_status, actor="cli_user", reason="CLI更新")
+            except ValueError as e:
+                console.print(f"[red]状态更新失败: {e}[/]")
+                return
             await store.add_event(case_id, event)
             console.print(f"[green]OK[/] Status updated: {case_data['status']} -> {status}")
 

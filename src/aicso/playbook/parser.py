@@ -3,9 +3,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import structlog
 import yaml
 
 from aicso.models.playbook import Playbook, PlaybookStep, RiskLevel
+
+logger = structlog.get_logger()
 
 
 class PlaybookParser:
@@ -56,12 +59,13 @@ class PlaybookParser:
             try:
                 pb = PlaybookParser.parse_file(str(yaml_file))
                 playbooks.append(pb)
-            except Exception:
-                pass
+            except Exception as e:
+                # 坏YAML不能静默消失——运维以为加载成功实际缺失（review #56发现51）
+                logger.warning("playbook.parse_failed", file=str(yaml_file), error=str(e))
         for yml_file in path.glob("*.yml"):
             try:
                 pb = PlaybookParser.parse_file(str(yml_file))
                 playbooks.append(pb)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("playbook.parse_failed", file=str(yml_file), error=str(e))
         return playbooks

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import structlog
@@ -106,7 +106,12 @@ class SchemaMapper:
         if self.events_path:
             events = get_nested(parsed, self.events_path)
             if isinstance(events, list) and events:
-                return [e for e in events if isinstance(e, dict)]
+                expanded = [e for e in events if isinstance(e, dict)]
+                if expanded:
+                    return expanded
+                # 数组全为非dict元素：回退raw包装——直接返回[]会让该消息
+                # 内容静默丢失且位点照常提交（review #56发现）
+                return [{"__raw__": raw_text}]
         return [parsed]
 
     # ---- normalize ----
@@ -214,8 +219,11 @@ class SchemaMapper:
 
     def _normalize_severity(self, raw: dict, profile: dict, getf) -> tuple[str, str | None]:
         severity_int_path = profile["fields"].get("severity_int")
-        raw_text = getf("severity_text")
+        # 兼容旧文档/config示例的 severity: 键（#36映射重构后引擎只读
+        # severity_text/severity_int，示例键被静默忽略致全量medium，#56发现20）
+        raw_text = getf("severity_text") or getf("severity")
         raw_int = getf("severity_int") if severity_int_path else None
+        mapping_warning: str | None = None
 
         # 1) 用户自定义数值映射（如 {1: critical, 2: high}）
         #    JSON配置的键必然是字符串，int/str双查都支持
@@ -225,7 +233,11 @@ class SchemaMapper:
                 mapped = (self.severity_mapping.get(value)
                           or self.severity_mapping.get(str(value)))
                 if mapped:
-                    return mapped, None
+                    if mapped in SEVERITY_LEVELS:
+                        return mapped, None
+                    # 映射值不在规范词表：告警并继续回退，不让任意字符串
+                    # 绕过校验静默入库（review #56发现21）
+                    mapping_warning = f"severity_mapping值{mapped!r}不在规范词表"
             except (ValueError, TypeError):
                 pass
 
@@ -249,11 +261,24 @@ class SchemaMapper:
         if self.severity_mapping and isinstance(raw_text, str) and raw_text:
             mapped = self.severity_mapping.get(raw_text)
             if mapped:
-                return mapped, None
+                if mapped in SEVERITY_LEVELS:
+                    return mapped, None
+                mapping_warning = mapping_warning or \
+                    f"severity_mapping值{mapped!r}不在规范词表"
 
-        return "medium", f"无法识别严重度(text={raw_text!r}, int={raw_int!r})，已用medium"
+        warning = f"无法识别严重度(text={raw_text!r}, int={raw_int!r})，已用medium"
+        if mapping_warning:
+            warning = f"{mapping_warning}；{warning}"
+        return "medium", warning
 
     # ---- 时间：ISO / epoch ms / epoch s / 自定义模板 ----
+
+    @staticmethod
+    def _to_naive_utc(dt: datetime) -> datetime:
+        """aware → UTC naive（全仓时间戳统一naive-UTC语义，见store写入格式）"""
+        if dt.tzinfo is not None:
+            return dt.astimezone(UTC).replace(tzinfo=None)
+        return dt
 
     def _normalize_timestamp(self, raw_ts: Any) -> datetime | None:
         if raw_ts in (None, ""):
@@ -261,23 +286,27 @@ class SchemaMapper:
         if isinstance(raw_ts, (int, float)):
             try:
                 value = raw_ts / 1000 if raw_ts > 1e12 else raw_ts
-                return datetime.fromtimestamp(value)
+                # epoch必须按UTC解释：默认走本地时区会让同一时刻与ISO路径
+                # 相差整时区偏移（东八区8小时，review #56发现19）
+                return self._to_naive_utc(datetime.fromtimestamp(value, tz=UTC))
             except (ValueError, OSError, OverflowError):
                 return None
         text = str(raw_ts)
         if self.timestamp_format:
             try:
-                return datetime.strptime(text, self.timestamp_format)
+                parsed = datetime.strptime(text, self.timestamp_format)
+                return self._to_naive_utc(parsed)
             except ValueError:
                 pass
         try:
-            return datetime.fromisoformat(text.replace("Z", "+00:00")).replace(tzinfo=None)
+            return self._to_naive_utc(
+                datetime.fromisoformat(text.replace("Z", "+00:00")))
         except ValueError:
             pass
         try:
             value = float(text)
             value = value / 1000 if value > 1e12 else value
-            return datetime.fromtimestamp(value)
+            return self._to_naive_utc(datetime.fromtimestamp(value, tz=UTC))
         except (ValueError, OverflowError):
             return None
 

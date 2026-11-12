@@ -148,18 +148,20 @@ class ApprovalEngine:
             return result
         except TimeoutError:
             request.status = ApprovalStatus.TIMEOUT
+            self._pending.pop(request.request_id, None)  # 超时同样移出，_pending不无界增长
             logger.warning("approval.timeout", request_id=request.request_id)
             return ApprovalResult(approved=False, reason="审批超时")
 
     async def approve(self, request_id: str, approver: str, reason: str = "") -> bool:
-        """批准审批请求"""
+        """批准审批请求（仅PENDING可决议：超时/已决议的请求不可"复活"，#56发现16）"""
         request = self._pending.get(request_id)
-        if not request:
+        if not request or request.status != ApprovalStatus.PENDING:
             return False
 
         request.status = ApprovalStatus.APPROVED
         request.approved_by = approver
         request.resolved_at = datetime.utcnow()
+        self._pending.pop(request_id, None)  # 决议后移出，_pending不无界增长
 
         future = self._futures.pop(request_id, None)
         if future and not future.done():
@@ -177,14 +179,15 @@ class ApprovalEngine:
         return True
 
     async def reject(self, request_id: str, approver: str, reason: str = "") -> bool:
-        """拒绝审批请求"""
+        """拒绝审批请求（仅PENDING可决议）"""
         request = self._pending.get(request_id)
-        if not request:
+        if not request or request.status != ApprovalStatus.PENDING:
             return False
 
         request.status = ApprovalStatus.REJECTED
         request.approved_by = approver
         request.resolved_at = datetime.utcnow()
+        self._pending.pop(request_id, None)
 
         future = self._futures.pop(request_id, None)
         if future and not future.done():

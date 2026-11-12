@@ -80,6 +80,20 @@ class LocalFallback:
             for k in expired:
                 del cache[k]
 
+    def reassign(self, from_case_id: str, to_case_id: str) -> int:
+        """把from_case名下的兜底槽位转给to_case（merge吸收实体/槽位，§8）
+
+        只deactivate不reassign会让absorbed独有pair的新告警匹配不到主Case，
+        合并的"归拢"效果在兜底路径失效（review #56发现7）。
+        """
+        moved = 0
+        for cache in (self._pair_cache, self._weak_cache):
+            for key, (cid, last_seen) in list(cache.items()):
+                if cid == from_case_id:
+                    cache[key] = (to_case_id, last_seen)
+                    moved += 1
+        return moved
+
     def rebuild(self, rows: list[dict]) -> int:
         """从DB行重建pair缓存（重启恢复）
 

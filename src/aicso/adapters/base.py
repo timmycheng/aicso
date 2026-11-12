@@ -4,7 +4,11 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from datetime import datetime
 
+import structlog
+
 from aicso.models.alert import Alert
+
+logger = structlog.get_logger()
 
 
 class DataSourceAdapter(ABC):
@@ -28,6 +32,15 @@ class DataSourceAdapter(ABC):
         """标准化为统一Alert格式"""
         ...
 
+    async def close(self) -> None:
+        """释放连接资源（有状态的适配器覆写；默认无操作。
+
+        必须存在于基类：datasource_manager.stop 与 suggest live 采样
+        对所有适配器统一调 close()，缺省实现缺失会让 syslog/json_file
+        等类型 AttributeError 500（review #56发现）。）
+        """
+        return None
+
     async def commit(self) -> None:
         """提交消费位点（支持offset语义的适配器覆写；默认无操作）"""
         return None
@@ -40,8 +53,11 @@ class DataSourceAdapter(ABC):
             try:
                 alert = await self.normalize(raw)
                 results.append(alert)
-            except Exception:
-                pass
+            except Exception as e:
+                # 单条normalize崩溃只跳过该条，但必须留痕——
+                # 静默剔除无从排障（review #56发现）
+                logger.error("adapter.normalize_failed",
+                             adapter=self.name, error=str(e))
         return results
 
 

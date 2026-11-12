@@ -7,6 +7,7 @@ from datetime import datetime
 # decision 取值
 ROUTE_TO = "route_to"      # 汇入已有Case
 NEW_CASE = "new_case"      # 新建Case
+FALSE_POSITIVE = "false_positive"  # 误报签名命中免路由（#51，不产生新Case）
 
 # source 取值
 SRC_SYSTEM_ONE = "system_one"  # System One 判定

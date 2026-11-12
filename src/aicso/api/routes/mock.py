@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Form, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
@@ -120,6 +120,15 @@ async def api_mock_generate(
     count = body.get("count", 10)
     categories = body.get("categories", [])
     inject = body.get("inject", False)
+
+    # 服务端钳制（前端max=500只是HTML约束）：类型非法/超量直接拒——
+    # 此前count=1000000可在单请求内灌百万告警进真实流水线（review #56发现37）
+    try:
+        count = int(count)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail=f"count必须是整数，收到: {count!r}")
+    if count < 1 or count > 500:
+        raise HTTPException(status_code=400, detail="count必须在1..500之间")
 
     # 类别健壮性：过滤非法值（透传未知类别会KeyError 500）
     valid_categories = [c for c in categories if c in CATEGORIES]

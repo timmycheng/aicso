@@ -51,7 +51,8 @@ class FakeConsumer:
     def highwater(self, tp):
         return {0: 100, 1: 50}.get(tp.partition, 0)
 
-    def position(self, tp):
+    async def position(self, tp):
+        # 与aiokafka 0.14一致：position()是协程（#56发现18修复依据）
         return {0: 90, 1: 50}.get(tp.partition, 0)
 
 
@@ -111,14 +112,14 @@ class TestLagStats:
     async def test_lag_computed(self):
         consumer = FakeConsumer([])
         adapter = make_adapter(consumer)
-        stats = adapter.stats()
+        stats = await adapter.stats()  # stats改async：position()需await（#56发现18）
         assert stats["total_lag"] == (100 - 90) + (50 - 50)
         assert stats["partitions"]["siem-alerts-0"] == 10
         assert stats["partitions"]["siem-alerts-1"] == 0
 
     async def test_stats_disconnected(self):
         adapter = KafkaAdapter()
-        assert adapter.stats() == {"total_lag": None, "partitions": {}}
+        assert await adapter.stats() == {"total_lag": None, "partitions": {}}
 
 
 class TestIdempotentRedelivery:

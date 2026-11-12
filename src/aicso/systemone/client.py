@@ -148,6 +148,7 @@ class SystemOneClient:
         model: str = "xiangxin-latest",
         timeout_ms: int = 2000,
         max_retries: int = 3,
+        rate_limit_max_retries: int = 2,  # 429/529限流重试上限（§5.5规定≤2次）
         backoff_base: float = 0.5,     # 5xx指数退避基数（秒）
         backoff_cap: float = 5.0,
         retry_after_cap: float = 30.0,  # retry-after 等待上限（秒）
@@ -158,6 +159,7 @@ class SystemOneClient:
         self.model = model
         self.timeout_ms = timeout_ms
         self.max_retries = max_retries
+        self.rate_limit_max_retries = rate_limit_max_retries
         self.backoff_base = backoff_base
         self.backoff_cap = backoff_cap
         self.retry_after_cap = retry_after_cap
@@ -228,9 +230,11 @@ class SystemOneClient:
                 return self._parse_response(resp, latency_ms)
 
             if resp.status_code in RETRY_AFTER_CODES:
-                if attempt > self.max_retries:
+                # §5.5：429/529限流重试≤2次（此前与5xx共用3次上限，
+                # 组织级配额紧张时多等一轮放大批延迟，#56发现49）
+                if attempt > self.rate_limit_max_retries:
                     raise RateLimitedError(
-                        f"限流(状态码{resp.status_code})重试{self.max_retries}次后仍失败",
+                        f"限流(状态码{resp.status_code})重试{self.rate_limit_max_retries}次后仍失败",
                         retry_after_ms=self._retry_after_ms(resp),
                     )
                 wait_s = min((self._retry_after_ms(resp) or 0) / 1000, self.retry_after_cap)

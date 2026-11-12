@@ -59,16 +59,22 @@ async def index(request: Request):
 
 def main():
     """启动Web服务"""
+    import os
+
     from aicso.config import load_config
     from aicso.logging import setup_logging
     config = load_config()
     setup_logging(level=config.logging.level)
+    # reload 仅显式开启（AICSO_RELOAD=1 的开发场景）；生产入口默认关——
+    # 此前无条件reload=True，生产镜像跑热重载（review #56发现47）
+    reload = os.environ.get("AICSO_RELOAD") == "1"
     uvicorn.run(
         "aicso.api.app:app",
         host=config.server.host,
         port=config.server.port,
-        reload=True,
-        reload_dirs=[str(Path(__file__).resolve().parent.parent.parent / "src")],
+        reload=reload,
+        reload_dirs=[str(Path(__file__).resolve().parent.parent.parent / "src")]
+        if reload else None,
     )
 
 

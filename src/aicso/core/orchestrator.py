@@ -21,9 +21,7 @@ from aicso.models.case import (
     Case,
     CaseEvent,
     CaseEventType,
-    CasePriority,
     CaseSeverity,
-    CaseStatus,
 )
 from aicso.router.engine import RouterEngine
 from aicso.store.alert_store import AlertStore
@@ -64,6 +62,8 @@ class Orchestrator:
         self._triage_semaphore: asyncio.Semaphore | None = None
         self._triage_queue: asyncio.Queue | None = None
         self._triage_worker_task: asyncio.Task | None = None
+        # 后台任务跟踪（fire-and-forget不进黑洞、shutdown可取消）
+        self._background: set[asyncio.Task] = set()
 
     def start(self) -> None:
         """启动编排引擎（后台 worker）"""
@@ -81,6 +81,11 @@ class Orchestrator:
             except asyncio.CancelledError:
                 pass
             self._triage_worker_task = None
+        for task in list(self._background):  # 跟踪的后台任务一并取消
+            task.cancel()
+        if self._background:
+            await asyncio.gather(*self._background, return_exceptions=True)
+        self._background.clear()
         logger.info("orchestrator.stopped")
 
     async def _triage_worker(self) -> None:
@@ -140,9 +145,33 @@ class Orchestrator:
                 self._triage_queue.put_nowait((case_id, trigger_alert))
                 return
             except asyncio.QueueFull:
-                logger.warning("orchestrator.triage_queue_full", case_id=case_id)
-        # 未启动worker（如测试环境）：直接异步执行
-        asyncio.create_task(self.run_initial_triage(case_id, trigger_alert))
+                # §5.7：triage满时延迟而非丢弃。此前落入裸create_task——
+                # 绕过队列有界性与s2_concurrency信号量，过载风暴下每个
+                # 新Case起无界任务（review #56发现14）。改为跟踪任务内
+                # 等空位入队：不阻塞router worker，仍受队列+信号量约束。
+                logger.warning("orchestrator.triage_queue_full_wait", case_id=case_id)
+                self._spawn(self._enqueue_when_space(case_id, trigger_alert))
+                return
+        # 未启动worker（如测试环境）：直接异步执行（跟踪任务防孤儿协程）
+        self._spawn(self.run_initial_triage(case_id, trigger_alert))
+
+    async def _enqueue_when_space(self, case_id: str, trigger_alert: Alert) -> None:
+        """队列满时等待空位入队（零丢失延迟语义，§5.7）"""
+        assert self._triage_queue is not None
+        await self._triage_queue.put((case_id, trigger_alert))
+
+    def _spawn(self, coro) -> asyncio.Task:
+        """跟踪的后台任务：异常进日志不进黑洞，shutdown时可取消（#56发现48）"""
+        task = asyncio.create_task(coro)
+        self._background.add(task)
+        task.add_done_callback(self._on_background_done)
+        return task
+
+    def _on_background_done(self, task: asyncio.Task) -> None:
+        self._background.discard(task)
+        if not task.cancelled() and task.exception() is not None:
+            logger.error("orchestrator.background_task_failed",
+                         error=str(task.exception()))
 
     async def run_initial_triage(self, case_id: str, trigger_alert: Alert) -> None:
         """S2初始研判（任务→引擎映射，设计§6）：
@@ -170,6 +199,23 @@ class Orchestrator:
             if self.dispatcher and self.dispatcher.enabled:
                 judgment = await self.dispatcher.judge_triage(
                     case_id, case_data.get("title", ""), alerts,
+                )
+                if judgment is None:
+                    # §6：失败重试一次，仍失败标needs_review——
+                    # 此前静默跳过，判定维度缺失无人知晓（review #56发现15）
+                    judgment = await self.dispatcher.judge_triage(
+                        case_id, case_data.get("title", ""), alerts,
+                    )
+                    if judgment is None:
+                        await self._record_needs_review(
+                            case_id,
+                            "判定型初始研判未完成：System One判定失败（重试后仍失败），需人工研判"
+                        )
+            else:
+                # §6开关矩阵：system_one.enabled=false时判定型降级为人工
+                await self._record_needs_review(
+                    case_id,
+                    "判定型初始研判未执行：System One未启用，需人工研判"
                 )
             if judgment:
                 await self._apply_triage_judgment(case_id, case_data, judgment)
@@ -216,27 +262,12 @@ class Orchestrator:
 
     @staticmethod
     def _rebuild_case(case_data: dict, **overrides) -> Case:
-        """从DB行重建Case模型（metadata/tags是JSON字符串，需解析）"""
-        import json
+        """从DB行重建Case模型——走 Case.from_row 带全部持久化字段。
 
-        metadata = case_data.get("metadata", "{}")
-        if isinstance(metadata, str):
-            try:
-                metadata = json.loads(metadata)
-            except (json.JSONDecodeError, TypeError):
-                metadata = {}
-        fields = dict(
-            case_id=case_data["case_id"],
-            title=case_data["title"],
-            severity=CaseSeverity(case_data["severity"]),
-            status=CaseStatus(case_data["status"]),
-            priority=CasePriority(case_data["priority"]),
-            assignee_id=case_data.get("assignee_id"),
-            resolution=case_data.get("resolution"),
-            metadata=metadata,
-            ai_summary=case_data.get("ai_summary"),
-            ai_recommendation=case_data.get("ai_recommendation"),
-        )
+        update() 是全列UPDATE：重建若漏字段（tags/metadata/sla_deadline等），
+        会被模型默认值静默覆盖（review #56 发现1）。
+        """
+        fields = Case.from_row(case_data).model_dump()
         fields.update(overrides)
         return Case(**fields)
 

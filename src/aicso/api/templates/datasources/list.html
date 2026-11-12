@@ -86,7 +86,7 @@
                 draft.schema = "generic";
                 document.getElementById("map-config").value = JSON.stringify(draft, null, 1);
                 const cov = r.validation ? ("实体覆盖 " + r.validation.entity_coverage + "，警告 " + r.validation.warning_total + " 条") : "";
-                toast("映射草稿已填入，请点"试算映射"确认后应用 " + cov, "success");
+                toast("映射草稿已填入，请点「试算映射」确认后应用 " + cov, "success");
             } catch (e) {
                 toast("建议失败: " + e, "error");
             } finally {

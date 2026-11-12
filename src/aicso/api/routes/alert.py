@@ -22,6 +22,7 @@ async def alert_list(
     limit: int = 50,
     state: AppState = Depends(get_state),
 ):
+    limit = min(max(int(limit), 1), 200)  # 钳制：负LIMIT在SQLite等于无上限
     alerts = await state.alert_store.list_alerts(case_id=case_id, source=source, limit=limit)
     total = await state.alert_store.count(case_id=case_id)
     return templates.TemplateResponse(
@@ -59,6 +60,7 @@ async def api_alert_list(
     limit: int = 50,
     state: AppState = Depends(get_state),
 ):
+    limit = min(max(int(limit), 1), 200)  # 钳制：负LIMIT在SQLite等于无上限
     alerts = await state.alert_store.list_alerts(case_id=case_id, source=source, limit=limit)
     return {"alerts": alerts, "count": len(alerts)}
 
