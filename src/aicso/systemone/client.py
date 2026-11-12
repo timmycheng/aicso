@@ -215,8 +215,10 @@ class SystemOneClient:
                                          timeout=req_timeout)
             except (httpx.TimeoutException, httpx.TransportError) as e:
                 if attempt > self.max_retries:
+                    # 超时/传输错误区分（#50）：微调器据此放宽超时系数
+                    kind = "请求超时" if isinstance(e, httpx.TimeoutException) else "网络错误"
                     raise SystemOneUnavailableError(
-                        f"网络错误重试{self.max_retries}次后仍失败: {e}"
+                        f"{kind}重试{self.max_retries}次后仍失败: {e}"
                     ) from e
                 await self._backoff_sleep(attempt)
                 continue

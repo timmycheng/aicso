@@ -65,6 +65,9 @@ system_one:
   batch_window_ms: 100         # 微批聚合窗口
   batch_max_alerts: 50         # 单批条数上限
   token_budget: 32000          # 单请求token估算预算（超预算切子批，防422/连接中断整流降级，#42）
+  timeout_scale: 0.3           # 请求超时随token规模缩放系数（#42）
+  auto_tune: true              # 防御性参数有界自调（#50）：422收缩预算/超时放宽超时系数，
+                               # 有界+审计+可回滚；状态见 /router/api/tuner
   timeout_ms: 2000
   confidence_threshold: 0.6    # 低于阈值 → 保守新建Case + 人工复核
   cache_ttl_seconds: 60

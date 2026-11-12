@@ -92,6 +92,9 @@ class SystemOneConfig(BaseModel):
     fallback: str = "local_rules"  # API不可用时的降级方式
     candidate_top_k: int = 10    # 候选Case数量上限（Choice ≤255 约束内）
     review_queue_enabled: bool = True  # 低置信度进人工复核
+    timeout_scale: float = 0.3   # 请求超时随token规模缩放系数（2s基线+est×scale，#42）
+    auto_tune: bool = True       # 防御性参数有界自调（#50）：422收缩预算/超时放宽
+                                 # timeout_scale，有界+审计+可回滚；语义类参数不自动调
 
 
 class RoutingConfig(BaseModel):

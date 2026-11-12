@@ -44,6 +44,7 @@ from aicso.router.batcher import RoutingBatcher
 from aicso.router.fallback import LocalFallback
 from aicso.router.index import CaseRoutingIndex, entity_keys_of, entity_signature
 from aicso.router.metrics import RouterMetrics
+from aicso.router.tuner import ParamTuner
 from aicso.store.alert_store import AlertStore
 from aicso.store.case_store import CaseStore
 from aicso.store.routing_store import RoutingDecisionStore
@@ -121,6 +122,8 @@ class RouterEngine:
         self._degraded = self._client is None
         self._worker_task: asyncio.Task | None = None
         self._probe_task: asyncio.Task | None = None
+        self._tuner: ParamTuner | None = None
+        self._tuner_task: asyncio.Task | None = None
         self._running = False
         # 决策缓存: signature -> (case_id, ts)
         self._cache: dict[str, tuple[str, datetime]] = {}
@@ -132,6 +135,9 @@ class RouterEngine:
             return
         self._running = True
         self._worker_task = asyncio.create_task(self._worker())
+        if self.scfg.auto_tune and self._client is not None:
+            self._tuner = ParamTuner(self.scfg, self.metrics)
+            self._tuner_task = asyncio.create_task(self._tuner.loop())
         logger.info(
             "router.started",
             system_one_enabled=self._client is not None,
@@ -141,7 +147,7 @@ class RouterEngine:
 
     async def stop(self) -> None:
         self._running = False
-        for task in (self._worker_task, self._probe_task):
+        for task in (self._worker_task, self._probe_task, self._tuner_task):
             if task:
                 task.cancel()
                 try:
@@ -150,6 +156,7 @@ class RouterEngine:
                     pass
         self._worker_task = None
         self._probe_task = None
+        self._tuner_task = None
         logger.info("router.stopped")
 
     # ---- 入口 ----
@@ -316,10 +323,9 @@ class RouterEngine:
         assert self._client is not None
         state = "\n\n".join(it.state for it in items)
         questions = {it.name: it.question for it in items}
-        # 大批推理时长随输入规模增长：2s基线+0.3ms/估算token（45k批≈15s）。
-        # 固定2s会把正常大请求误判为网络错误→整流降级（#42/#44验收实测）
+        # 大批推理时长随输入规模增长：基线+est×scale（scale可由微调器自适应，#50）
         est_tokens = sum(it.est_tokens for it in items)
-        req_timeout = self.scfg.timeout_ms + int(est_tokens * 0.3)
+        req_timeout = self.scfg.timeout_ms + int(est_tokens * self.scfg.timeout_scale)
         try:
             response = await self._client.system_one(state=state, questions=questions,
                                                      timeout_ms=req_timeout)
@@ -357,6 +363,9 @@ class RouterEngine:
             raise
         except SystemOneError as e:
             self.metrics.systemone_errors_total += 1
+            if "请求超时" in str(e):
+                # 超时类错误单列（#50）：微调器据此放宽timeout_scale
+                self.metrics.systemone_timeout_errors_total += 1
             logger.warning("router.systemone_failed_enter_degraded",
                            error=str(e), batch_size=len(items))
             self._enter_degraded()
