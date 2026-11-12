@@ -58,6 +58,7 @@
     </div>
     <div style="margin-top:14px;">
         <button class="btn primary" id="map-run">试算映射</button>
+        <button class="btn" id="map-suggest" title="从样例推断字段映射草稿（本地规则，试算验证后人工确认）">自动建议映射</button>
     </div>
     <div id="map-result" style="margin-top:16px;"></div>
 </div>
@@ -66,6 +67,33 @@
 (function () {
     const btn = document.getElementById("map-run");
     if (!btn) return;
+    const suggestBtn = document.getElementById("map-suggest");
+    if (suggestBtn) {
+        suggestBtn.addEventListener("click", async () => {
+            const sample = document.getElementById("map-sample").value.trim();
+            if (!sample) { toast("请先粘贴样例消息（多条用JSON数组）", "error"); return; }
+            suggestBtn.classList.add("loading");
+            try {
+                const r = await fetchJSON("/datasources/api/suggest-mapping", {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({samples: [sample]}),
+                });
+                if (r.error) { toast(r.error, "error"); return; }
+                const draft = {};
+                if (r.fields && Object.keys(r.fields).length) draft.field_mapping = r.fields;
+                if (r.entity_mapping && Object.keys(r.entity_mapping).length) draft.entity_mapping = r.entity_mapping;
+                draft.schema = "generic";
+                document.getElementById("map-config").value = JSON.stringify(draft, null, 1);
+                const cov = r.validation ? ("实体覆盖 " + r.validation.entity_coverage + "，警告 " + r.validation.warning_total + " 条") : "";
+                toast("映射草稿已填入，请点"试算映射"确认后应用 " + cov, "success");
+            } catch (e) {
+                toast("建议失败: " + e, "error");
+            } finally {
+                suggestBtn.classList.remove("loading");
+            }
+        });
+    }
     btn.addEventListener("click", async () => {
         const root = document.getElementById("map-result");
         const sample = document.getElementById("map-sample").value.trim();
