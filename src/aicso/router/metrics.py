@@ -25,6 +25,7 @@ class RouterMetrics:
         self.systemone_errors_total = 0
         self.systemone_split_total = 0      # 422上下文溢出二分切批次数(#42)
         self.systemone_oversized_total = 0  # 单条上下文超限走兜底数(#42)
+        self.systemone_timeout_errors_total = 0  # 请求超时类错误(#50微调器输入)
         self.queue_high_water_events = 0
         self.low_confidence_total = 0   # 低于阈值转复核
         self._latencies: deque[float] = deque(maxlen=latency_samples)
@@ -66,6 +67,7 @@ class RouterMetrics:
             "systemone_errors_total": self.systemone_errors_total,
             "systemone_split_total": self.systemone_split_total,
             "systemone_oversized_total": self.systemone_oversized_total,
+            "systemone_timeout_errors_total": self.systemone_timeout_errors_total,
             "queue_high_water_events": self.queue_high_water_events,
             "queue_depth": queue_depth,
             "queue_max": queue_max,

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
@@ -100,6 +100,28 @@ async def api_router_status(state: AppState = Depends(get_state)):
         **engine.status(),
         "index_slots": engine.index.slot_rows()[:50],
     }
+
+
+@router.get("/api/tuner")
+async def api_tuner_status(state: AppState = Depends(get_state)):
+    """参数微调器状态（issue #50）：当前值/初始值/调整历史"""
+    tuner = getattr(state.router, "_tuner", None)
+    if tuner is None:
+        return {"enabled": False,
+                "message": "未启用（auto_tune=false 或本地兜底模式）"}
+    return {"enabled": True, **tuner.snapshot()}
+
+
+@router.post("/api/tuner/rollback")
+async def api_tuner_rollback(state: AppState = Depends(get_state)):
+    """一键回滚微调器最近一次参数调整（issue #50）"""
+    tuner = getattr(state.router, "_tuner", None)
+    if tuner is None:
+        raise HTTPException(status_code=404, detail="微调器未启用")
+    decision = tuner.rollback()
+    if decision is None:
+        return {"ok": False, "message": "无可回滚的调整"}
+    return {"ok": True, "decision": vars(decision)}
 
 
 @router.get("/api/decisions")
