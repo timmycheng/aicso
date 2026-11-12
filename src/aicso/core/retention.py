@@ -1,10 +1,11 @@
 """告警保留策略服务（P3，设计§12容量治理）
 
 大量告警日志下的SQLite容量治理：按保留天数周期清理过期告警。
-清理范围三档：
-- orphan_only: 仅未关联Case的孤立告警
-- closed_cases: 孤立告警 + 已关闭/已解决Case下的告警（默认）
-- all: 所有过期告警（含活跃Case下的，慎用）
+清理范围三档（均只删已路由告警——未路由=从未被处理，删除即永久丢失，
+违背§2零丢弃与§5.6重启回灌前提，review #56发现3）：
+- orphan_only: 仅已路由但未关联Case的过期告警
+- closed_cases: 上述 + 已关闭/已解决Case下的过期告警（默认）
+- all: 所有已路由的过期告警（含活跃Case下的，慎用）
 """
 from __future__ import annotations
 
@@ -18,6 +19,8 @@ from aicso.store.database import Database
 
 logger = structlog.get_logger()
 
+# 三档范围均追加 routed_at IS NOT NULL：路由积压（routed_at IS NULL）
+# 恰好落在 case_id IS NULL 的孤儿集合里，不排除会被当垃圾清掉
 _SCOPE_SQL = {
     "orphan_only": "AND case_id IS NULL",
     "closed_cases": (
@@ -26,6 +29,10 @@ _SCOPE_SQL = {
     ),
     "all": "",
 }
+
+# 单批删除行数：SQLite未编译ENABLE_UPDATE_DELETE_LIMIT时DELETE不支持LIMIT，
+# 用 rowid IN (SELECT ... LIMIT ?) 分页，避免千万行级首跑形成长写事务
+_DELETE_BATCH = 5000
 
 
 class RetentionService:
@@ -44,16 +51,26 @@ class RetentionService:
             logger.warning("retention.invalid_scope", scope=self.config.scope)
             return 0
         cutoff = (datetime.utcnow() - timedelta(days=self.config.alert_days)).isoformat()
-        cursor = await self.db.execute(
-            f"DELETE FROM alerts WHERE created_at < ? {scope_sql}",
-            (cutoff,),
-        )
-        await self.db.commit()
-        deleted = cursor.rowcount if cursor else 0
-        if deleted:
-            logger.info("retention.cleaned", deleted=deleted,
+        total = 0
+        while True:
+            cursor = await self.db.execute(
+                f"""DELETE FROM alerts WHERE rowid IN (
+                        SELECT rowid FROM alerts
+                        WHERE created_at < ? {scope_sql}
+                          AND routed_at IS NOT NULL
+                        LIMIT {_DELETE_BATCH})""",
+                (cutoff,),
+            )
+            deleted = cursor.rowcount if cursor else 0
+            await self.db.commit()
+            total += deleted
+            if deleted < _DELETE_BATCH:
+                break
+            await asyncio.sleep(0)  # 批间让出事件循环，写事务不阻塞热路径
+        if total:
+            logger.info("retention.cleaned", deleted=total,
                         scope=self.config.scope, alert_days=self.config.alert_days)
-        return deleted
+        return total
 
     def start(self) -> None:
         """启动周期清理任务"""

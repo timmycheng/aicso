@@ -123,11 +123,16 @@ class CaseStore:
             (case_id,),
         )
 
-    async def count(self, status: str | None = None) -> int:
+    async def count(
+        self, status: str | None = None, severity: str | None = None
+    ) -> int:
         sql = "SELECT COUNT(*) as cnt FROM cases"
         params: list = []
         if status:
             sql += " WHERE status = ?"
             params.append(status)
+        if severity:
+            sql += " AND severity = ?" if status else " WHERE severity = ?"
+            params.append(severity)
         row = await self.db.fetch_one(sql, tuple(params))
         return row["cnt"] if row else 0

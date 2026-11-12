@@ -149,10 +149,18 @@ def load_dotenv(path: str = ".env") -> dict[str, str]:
 
 
 def _resolve_env_vars(obj):
-    """递归解析 ${ENV_VAR} 格式的环境变量"""
+    """递归解析 ${ENV_VAR} 格式的环境变量
+
+    未定义的变量解析为空串并告警——此前保留"${VAR}"字面量，非空字符串
+    会骗过 `if scfg.api_key` 类空值守卫，拿垃圾key打API（review #56发现45）。
+    """
     if isinstance(obj, str) and obj.startswith("${") and obj.endswith("}"):
         env_name = obj[2:-1]
-        return os.environ.get(env_name, obj)
+        if env_name in os.environ:
+            return os.environ[env_name]
+        print(f"[config] WARNING: 环境变量 {env_name} 未定义，"
+              f"${{{env_name}}} 占位符解析为空（相关功能将按未配置处理）")
+        return ""
     elif isinstance(obj, dict):
         return {k: _resolve_env_vars(v) for k, v in obj.items()}
     elif isinstance(obj, list):

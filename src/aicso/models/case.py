@@ -476,3 +476,57 @@ class Case(BaseModel):
             {"source": source, "title": self.title}
         )
         return event
+
+    @classmethod
+    def from_row(cls, row: dict) -> Case:
+        """从DB行重建完整Case（唯一反序列化入口）
+
+        update() 是全列UPDATE：任何调用方若只重建部分字段，
+        其余字段（tags/metadata/AI结论/closed_at/sla_deadline）会被默认值覆盖。
+        重建必须走本方法带上全部持久化字段。
+        """
+        import json
+
+        def _dt(value) -> datetime | None:
+            if not value:
+                return None
+            if isinstance(value, datetime):
+                return value
+            try:
+                return datetime.fromisoformat(str(value))
+            except ValueError:
+                return None
+
+        def _load(text, default):
+            if not text:
+                return default
+            try:
+                return json.loads(text)
+            except (TypeError, ValueError):
+                return default
+
+        def _enum(enum_cls, value, fallback):
+            try:
+                return enum_cls(value)
+            except ValueError:
+                return fallback
+
+        return cls(
+            case_id=row["case_id"],
+            title=row.get("title", ""),
+            severity=_enum(CaseSeverity, row.get("severity"), CaseSeverity.MEDIUM),
+            status=_enum(CaseStatus, row.get("status"), CaseStatus.NEW),
+            priority=_enum(CasePriority, row.get("priority"), CasePriority.P3),
+            assignee_id=row.get("assignee_id"),
+            tags=_load(row.get("tags"), []),
+            ai_summary=row.get("ai_summary"),
+            ai_recommendation=row.get("ai_recommendation"),
+            resolution=row.get("resolution"),
+            metadata=_load(row.get("metadata"), {}),
+            merged_into=row.get("merged_into"),
+            split_from=row.get("split_from"),
+            created_at=_dt(row.get("created_at")) or datetime.utcnow(),
+            updated_at=_dt(row.get("updated_at")) or datetime.utcnow(),
+            closed_at=_dt(row.get("closed_at")),
+            sla_deadline=_dt(row.get("sla_deadline")),
+        )

@@ -20,8 +20,9 @@ class AlertStore:
         alert_id主键幂等：重复投递（at-least-once重放）时忽略，
         保留首次路由结果。调用方据此跳过重复路由。
         """
-        # 直写execute不单独commit——由写缓冲批次的commit统一提交
-        # （崩溃未commit→重投→主键幂等吸收，语义自洽）
+        # 直写execute拿rowcount（幂等去重需要同步结果）。
+        # 有写缓冲时由缓冲批次统一commit；无缓冲装配（CLI/测试直连）必须
+        # 自行commit，否则数据悬在打开事务里直到连接关闭被丢弃
         cursor = await self.db.execute(
             """INSERT OR IGNORE INTO alerts (alert_id, source, rule_id, rule_name, severity,
                timestamp, src_ip, dst_ip, src_port, dst_port, protocol,
@@ -38,6 +39,8 @@ class AlertStore:
                 alert.created_at.isoformat(), None, None,
             ),
         )
+        if not self.db.buffering:
+            await self.db.commit()
         return bool(cursor and cursor.rowcount)
 
     async def get(self, alert_id: str) -> dict | None:

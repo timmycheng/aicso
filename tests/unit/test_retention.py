@@ -21,7 +21,8 @@ async def make_setup():
     return db, CaseStore(db), AlertStore(db)
 
 
-async def seed_alert(alert_store, alert_id, case_id=None, age_days=0):
+async def seed_alert(alert_store, alert_id, case_id=None, age_days=0, routed=True):
+    """routed=False 模拟路由积压（routed_at IS NULL）——零丢弃语义下永不清理"""
     created = datetime.utcnow() - timedelta(days=age_days)
     alert = Alert(
         alert_id=alert_id, source="t", rule_name="R", severity="high",
@@ -29,6 +30,12 @@ async def seed_alert(alert_store, alert_id, case_id=None, age_days=0):
         created_at=created,
     )
     await alert_store.create(alert)
+    if routed:
+        if case_id:
+            await alert_store.mark_routed(alert_id, case_id, "system_one")
+        else:
+            # 已路由但无Case的孤立告警（如误报消费）也应可被清理
+            await alert_store.mark_false_positive(alert_id)
 
 
 async def seed_case(case_store, case_id, status=CaseStatus.NEW):
@@ -65,10 +72,12 @@ class TestRetentionCleanup:
         await seed_alert(alert_store, "A-OLD-CLOSED", case_id="C-CLOSED", age_days=100)
         # 过期+活跃Case → 留
         await seed_alert(alert_store, "A-OLD-ACTIVE", case_id="C-ACTIVE", age_days=100)
-        # 过期+孤立 → 删
+        # 过期+孤立（已路由误报）→ 删
         await seed_alert(alert_store, "A-OLD-ORPHAN", age_days=100)
         # 未过期 → 留
         await seed_alert(alert_store, "A-NEW", case_id="C-CLOSED", age_days=1)
+        # 过期+未路由积压（routed_at IS NULL）→ 留（零丢弃，review #56发现3）
+        await seed_alert(alert_store, "A-OLD-BACKLOG", age_days=100, routed=False)
 
         service = RetentionService(db, RetentionConfig(alert_days=90, scope="closed_cases"))
         deleted = await service.cleanup()
@@ -77,6 +86,7 @@ class TestRetentionCleanup:
         assert await alert_store.get("A-OLD-ORPHAN") is None
         assert await alert_store.get("A-OLD-ACTIVE") is not None
         assert await alert_store.get("A-NEW") is not None
+        assert await alert_store.get("A-OLD-BACKLOG") is not None
         await db.close()
 
     async def test_orphan_only_scope(self):
@@ -84,12 +94,14 @@ class TestRetentionCleanup:
         await seed_case(case_store, "C-CLOSED", status=CaseStatus.CLOSED)
         await seed_alert(alert_store, "A-OLD-CLOSED", case_id="C-CLOSED", age_days=100)
         await seed_alert(alert_store, "A-OLD-ORPHAN", age_days=100)
+        await seed_alert(alert_store, "A-OLD-BACKLOG", age_days=100, routed=False)
 
         service = RetentionService(db, RetentionConfig(alert_days=90, scope="orphan_only"))
         deleted = await service.cleanup()
         assert deleted == 1
         assert await alert_store.get("A-OLD-CLOSED") is not None
         assert await alert_store.get("A-OLD-ORPHAN") is None
+        assert await alert_store.get("A-OLD-BACKLOG") is not None
         await db.close()
 
     async def test_all_scope(self):
@@ -97,12 +109,14 @@ class TestRetentionCleanup:
         await seed_case(case_store, "C-ACTIVE", status=CaseStatus.NEW)
         await seed_alert(alert_store, "A-OLD-ACTIVE", case_id="C-ACTIVE", age_days=100)
         await seed_alert(alert_store, "A-NEW", age_days=1)
+        await seed_alert(alert_store, "A-OLD-BACKLOG", age_days=100, routed=False)
 
         service = RetentionService(db, RetentionConfig(alert_days=90, scope="all"))
         deleted = await service.cleanup()
         assert deleted == 1
         assert await alert_store.get("A-OLD-ACTIVE") is None
         assert await alert_store.get("A-NEW") is not None
+        assert await alert_store.get("A-OLD-BACKLOG") is not None
         await db.close()
 
     async def test_invalid_scope_noop(self):

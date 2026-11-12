@@ -8,6 +8,8 @@
 """
 from __future__ import annotations
 
+import asyncio
+import ipaddress
 import re
 import uuid
 from collections.abc import Callable
@@ -63,7 +65,13 @@ def _is_ip(value: Any) -> bool:
     m = IPV4.match(value)
     if m:
         return all(int(g) <= 255 for g in m.groups())
-    return bool(FQDN.match(value) and ":" in value)  # 粗略IPv6含冒号
+    # IPv6：原FQDN正则字符类不含冒号，含":"的字符串永远match不上（死代码）——
+    # 改用标准库解析（review #56发现）
+    try:
+        ipaddress.ip_address(value)
+        return True
+    except ValueError:
+        return False
 
 
 def _is_fqdn(value: Any) -> bool:
@@ -197,7 +205,11 @@ def sample_group_id(datasource: str) -> str:
 
 async def sample_kafka(config: dict, n: int = 50, timeout_s: float = 8.0,
                        consumer_factory: Callable | None = None) -> list[dict]:
-    """Kafka采样：临时消费组消费N条即停，不commit（主消费组位点零扰动）"""
+    """Kafka采样：临时消费组消费N条即停，不commit（主消费组位点零扰动）
+
+    整体受 timeout_s 预算约束（此前该参数完全未使用，慢速topic下
+    采样时长不可控，review #56发现）；超时返回已采到的部分。
+    """
     from aicso.mapping.engine import SchemaMapper
 
     factory = consumer_factory or _default_kafka_factory
@@ -207,15 +219,22 @@ async def sample_kafka(config: dict, n: int = 50, timeout_s: float = 8.0,
     samples: list[dict] = []
     try:
         mapper = SchemaMapper({})
-        while len(samples) < n:
-            data = await consumer.getmany(timeout_ms=1000, max_records=n - len(samples))
-            got = False
-            for _tp, messages in data.items():
-                for msg in messages:
-                    got = True
-                    samples.extend(mapper.expand_message(msg.value))
-            if not got:
-                break
+
+        async def _consume() -> None:
+            while len(samples) < n:
+                data = await consumer.getmany(timeout_ms=1000, max_records=n - len(samples))
+                got = False
+                for _tp, messages in data.items():
+                    for msg in messages:
+                        got = True
+                        samples.extend(mapper.expand_message(msg.value))
+                if not got:
+                    return
+
+        try:
+            await asyncio.wait_for(_consume(), timeout=timeout_s)
+        except TimeoutError:
+            pass  # 预算耗尽：返回已采样本
     finally:
         await consumer.stop()
     return samples[:n]

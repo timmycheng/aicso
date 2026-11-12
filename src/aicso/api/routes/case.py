@@ -36,8 +36,9 @@ async def case_list(
     limit: int = 50,
     state: AppState = Depends(get_state),
 ):
+    limit = min(max(int(limit), 1), 200)  # 钳制：负数在SQLite等于无上限
     cases = await state.case_store.list_cases(status=status, severity=severity, limit=limit)
-    total = await state.case_store.count(status=status)
+    total = await state.case_store.count(status=status, severity=severity)
     return templates.TemplateResponse(
         request,
         "cases/list.html",
@@ -60,7 +61,13 @@ async def case_create(
     severity: str = Form("medium"),
     state: AppState = Depends(get_state),
 ):
-    sev = CaseSeverity(severity)
+    try:
+        sev = CaseSeverity(severity)
+    except ValueError:
+        from urllib.parse import quote
+        return RedirectResponse(
+            url=f"/cases/new?error={quote(f'非法严重级别: {severity}')}", status_code=303
+        )
     case = Case(
         case_id=f"CSO-{datetime.utcnow().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}",
         title=title,
@@ -147,33 +154,34 @@ async def case_update(
     if not case_data:
         raise HTTPException(status_code=404, detail="Case不存在")
 
-    case = Case(
-        case_id=case_data["case_id"],
-        title=case_data["title"],
-        severity=CaseSeverity(case_data["severity"]),
-        status=CaseStatus(case_data["status"]),
-        priority=CasePriority(case_data["priority"]),
-        assignee_id=case_data.get("assignee_id"),
-        resolution=case_data.get("resolution"),
-    )
+    # 从DB行重建完整Case（from_row带全部持久化字段；update是全列UPDATE，
+    # 部分重建会静默抹掉tags/metadata/AI结论/SLA/closed_at——review #56发现1）
+    case = Case.from_row(case_data)
 
     events_to_save = []
 
     if status:
-        new_status = CaseStatus(status)
         try:
+            new_status = CaseStatus(status)  # 枚举解析也在守卫内：非法值303而非500
             event = case.transition_to(new_status, actor="web_user", reason="Web界面更新")
         except ValueError as e:
-            # 非法状态转换：回详情页带错误提示，而非500
+            # 非法状态转换/非法枚举：回详情页带错误提示，而非500
             from urllib.parse import quote
             return RedirectResponse(
                 url=f"/cases/{case_id}?error={quote(str(e))}", status_code=303
             )
         events_to_save.append(event)
 
-    if assignee is not None:
+        # Case 进入终态后摘出路由候选索引/兜底缓存（§5.6"活跃Case槽位"语义；
+        # rebuild 同样过滤 resolved/closed。运行期不摘除会继续吸收新告警）
+        if new_status in (CaseStatus.RESOLVED, CaseStatus.CLOSED):
+            state.router.index.deactivate(case_id)
+            state.router.fallback.deactivate(case_id)
+
+    # 表单文本框恒提交空串："留空=不变更"，仅非空才视为修改
+    if assignee:
         old_assignee = case.assignee_id
-        new_assignee = assignee or None
+        new_assignee = assignee.strip() or None
         if old_assignee != new_assignee:
             if new_assignee:
                 event = case.assign(new_assignee, actor="web_user", reason="Web界面分配")
@@ -181,8 +189,8 @@ async def case_update(
                 event = case.unassign(actor="web_user", reason="Web界面取消分配")
             events_to_save.append(event)
 
-    if resolution is not None:
-        case.resolution = resolution or None
+    if resolution:
+        case.resolution = resolution.strip() or None
 
     await state.case_store.update(case)
     for event in events_to_save:
@@ -200,6 +208,7 @@ async def api_case_list(
     limit: int = 50,
     state: AppState = Depends(get_state),
 ):
+    limit = min(max(int(limit), 1), 200)  # 钳制：负数在SQLite等于无上限
     cases = await state.case_store.list_cases(status=status, severity=severity, limit=limit)
     return {"cases": cases, "count": len(cases)}
 
@@ -279,10 +288,10 @@ async def api_case_correlations(case_id: str, state: AppState = Depends(get_stat
 @router.get("/api/{case_id}/context")
 async def api_case_context(case_id: str, state: AppState = Depends(get_state)):
     """Case完整运营视图：case+告警+时间线+操作记录+实体摘要+合并拆分关联"""
-    context = await state.context_manager.build_full_context(case_id)
-    if not context.get("case"):
-        return {"error": f"Case not found: {case_id}"}
-    return context
+    case = await state.case_store.get(case_id)
+    if not case:
+        raise HTTPException(status_code=404, detail="Case不存在")
+    return await state.context_manager.build_full_context(case_id)
 
 
 @router.post("/api/{case_id}/ops")
@@ -291,7 +300,7 @@ async def api_case_record_op(case_id: str, request: Request,
     """记录人工操作（补上下文/处置记录/拉人/升级等）"""
     body = await request.json()
     if await state.case_store.get(case_id) is None:
-        return {"error": f"Case not found: {case_id}"}
+        raise HTTPException(status_code=404, detail="Case不存在")
     record = await state.ops_service.record_op(
         case_id=case_id,
         actor=body.get("actor", "analyst"),

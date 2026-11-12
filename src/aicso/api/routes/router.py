@@ -42,10 +42,14 @@ async def api_merge_evaluate(request: Request, state: AppState = Depends(get_sta
     body = await request.json()
     case_a, case_b = body.get("case_a"), body.get("case_b")
     if not case_a or not case_b:
-        return {"error": "case_a/case_b必填"}, 400
+        # FastAPI不支持Flask式(dict,400)元组——此前实际返回200+数组（#56发现29）
+        raise HTTPException(status_code=400, detail="case_a/case_b必填")
     evaluation = await state.merge_engine.evaluate_pair(case_a, case_b)
     if evaluation is None:
-        return {"error": "评估不可用（System One不可用或Case不存在/已合并）"}
+        raise HTTPException(
+            status_code=422,
+            detail="评估不可用（System One不可用或Case不存在/已合并）",
+        )
     return {
         "case_a": evaluation.case_a, "case_b": evaluation.case_b,
         "choice": evaluation.choice, "confidence": evaluation.confidence,
@@ -58,7 +62,7 @@ async def api_merge_execute(request: Request, state: AppState = Depends(get_stat
     body = await request.json()
     primary, absorbed = body.get("primary"), body.get("absorbed")
     if not primary or not absorbed:
-        return {"error": "primary/absorbed必填"}
+        raise HTTPException(status_code=400, detail="primary/absorbed必填")
     return await state.merge_engine.merge(
         primary, absorbed, reason=body.get("reason", "manual"), actor="human")
 
@@ -161,5 +165,6 @@ async def api_router_decisions(
     state: AppState = Depends(get_state),
 ):
     """最近路由决策审计"""
-    rows = await state.routing_store.list_recent(limit=min(limit, 200))
+    limit = min(max(int(limit), 1), 200)  # 钳制：负LIMIT在SQLite等于无上限
+    rows = await state.routing_store.list_recent(limit=limit)
     return {"decisions": rows, "stats_by_source": await state.routing_store.stats_by_source()}

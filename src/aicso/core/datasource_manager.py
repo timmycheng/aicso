@@ -17,6 +17,10 @@ logger = structlog.get_logger()
 class DataSourceHandle:
     """单个数据源的运行时状态"""
 
+    # 失败批连续rewind上限：防个别毒消息把分区卡死；触顶后放行commit
+    # 并落死信告警（正常系统级失败如DB不可用在此前早已恢复）
+    MAX_REWIND_ATTEMPTS = 10
+
     def __init__(self, name: str, ds_config: DataSourceConfig, adapter: DataSourceAdapter):
         self.name = name
         self.ds_config = ds_config
@@ -26,6 +30,7 @@ class DataSourceHandle:
         self.last_error: str | None = None
         self.total_fetched: int = 0
         self.poll_count: int = 0
+        self.rewind_attempts: int = 0
         self.task: asyncio.Task | None = None
 
     def status_dict(self, stats: dict | None = None) -> dict:
@@ -157,7 +162,7 @@ class DataSourceManager:
                             total=handle.total_fetched,
                         )
 
-                    # 批次处理：系统级失败计数>0则跳过位点提交（重投），
+                    # 批次处理：系统级失败计数>0则不提交位点且不推进since——
                     # 重复投递由 alert_id 主键幂等吸收（INSERT OR IGNORE）
                     failures = 0
                     for alert in alerts:
@@ -173,14 +178,35 @@ class DataSourceManager:
                             )
 
                     if failures:
+                        #位点与since都不动（重投）。Kafka还需显式seek回批首：
+                        # getmany单调前进内存位点，仅不commit挡不住前进，
+                        # 下一成功批的commit会永久跳过失败消息（#56发现17/22）
+                        handle.rewind_attempts += 1
+                        rewound = False
+                        if hasattr(handle.adapter, "rewind"):
+                            if handle.rewind_attempts <= DataSourceHandle.MAX_REWIND_ATTEMPTS:
+                                try:
+                                    rewound = await handle.adapter.rewind()
+                                except Exception as e:
+                                    logger.error("datasource_manager.rewind_error",
+                                                 name=name, error=str(e))
+                            else:
+                                logger.error(
+                                    "datasource_manager.dead_letter_advance",
+                                    name=name, attempts=handle.rewind_attempts,
+                                    msg="失败批连续回退超限：放行commit跳过毒批",
+                                )
                         logger.warning(
                             "datasource_manager.skip_commit",
                             name=name, failures=failures, batch=len(alerts),
+                            rewound=rewound, attempts=handle.rewind_attempts,
                         )
-                    elif hasattr(handle.adapter, "commit"):
-                        await handle.adapter.commit()
+                        continue  # since不推进：REST路径下轮重拉同窗口（幂等吸收）
 
-                    # 更新 since 为本次拉取时间
+                    handle.rewind_attempts = 0
+                    if hasattr(handle.adapter, "commit"):
+                        await handle.adapter.commit()
+                    # 全部处理成功才推进 since（失败窗口告警不漏采，#56发现22）
                     since = datetime.utcnow()
 
             except asyncio.CancelledError:
@@ -194,13 +220,17 @@ class DataSourceManager:
     def get_handle(self, name: str) -> DataSourceHandle | None:
         return self._handles.get(name)
 
-    def list_status(self) -> list[dict]:
+    async def list_status(self) -> list[dict]:
         rows = []
         for h in self._handles.values():
             stats = None
             if hasattr(h.adapter, "stats"):
                 try:
-                    stats = h.adapter.stats()
+                    result = h.adapter.stats()
+                    # kafka适配器stats为协程（position()需await）
+                    if asyncio.iscoroutine(result):
+                        result = await result
+                    stats = result
                 except Exception as e:
                     logger.warning("datasource_manager.stats_error",
                                    name=h.name, error=str(e))

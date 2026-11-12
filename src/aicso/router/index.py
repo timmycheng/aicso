@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -50,6 +51,24 @@ def entity_signature(alert: Alert) -> str:
     """告警实体签名（决策缓存的key）"""
     entities = "|".join(f"{k}={v}" for k, v in sorted((alert.entities or {}).items()))
     return f"{alert.src_ip or '-'}|{alert.dst_ip or '-'}|{alert.rule_id or '-'}|{entities}"
+
+
+def _weak_entity_keys(raw_entities) -> list[str]:
+    """alerts.entities JSON 列 → 弱实体键（重启重建用；类型门控由调用方 _admit 承担）"""
+    if not raw_entities:
+        return []
+    if isinstance(raw_entities, str):
+        try:
+            raw_entities = json.loads(raw_entities)
+        except (TypeError, ValueError):
+            return []
+    if not isinstance(raw_entities, dict):
+        return []
+    return [
+        f"{etype}:{value}"
+        for etype, value in raw_entities.items()
+        if value
+    ]
 
 
 @dataclass
@@ -151,14 +170,16 @@ class CaseRoutingIndex:
     def rebuild(self, rows: list[dict]) -> int:
         """从DB行重建索引（重启恢复，§5.6）
 
-        rows: [{case_id, summary, src_ip, dst_ip, rule_id, last_seen}]
+        rows: [{case_id, summary, src_ip, dst_ip, rule_id, entities, last_seen, hits}]
         同一Case可能多行（多条告警/多pair），实体取并集、时间取最新、hits累加。
+        实体列（#44弱实体）参与重建——与热路径 entity_keys_of 一致，
+        保证重启前后路由行为一致（review #56发现8）。
         """
         self._slots.clear()
         self._entity_map.clear()
         for row in rows:
             case_id = row["case_id"]
-            # 与 entity_keys_of 一致：仅IP/对端实体参与候选（issue #31）
+            # 与 entity_keys_of 一致：ip/pair + 白名单弱实体（rule_id不参与，issue #31）
             entities = []
             if row.get("src_ip"):
                 entities.append(f"ip:{row['src_ip']}")
@@ -166,6 +187,8 @@ class CaseRoutingIndex:
                 entities.append(f"ip:{row['dst_ip']}")
             if row.get("src_ip") and row.get("dst_ip"):
                 entities.append(f"pair:{row['src_ip']}>{row['dst_ip']}")
+            for key in _weak_entity_keys(row.get("entities")):
+                entities.append(key)
 
             existing = self._slots.get(case_id)
             if existing is not None:

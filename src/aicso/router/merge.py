@@ -8,17 +8,25 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import structlog
 from ulid import ULID
 
 from aicso.config import SystemOneConfig
 from aicso.models.alert import Alert
-from aicso.models.case import Case, CaseSeverity, CaseStatus
+from aicso.models.case import (
+    SEVERITY_PRIORITY_MAP,
+    SLA_CONFIG,
+    Case,
+    CasePriority,
+    CaseSeverity,
+    CaseStatus,
+)
 from aicso.router.fallback import LocalFallback
 from aicso.router.index import CaseRoutingIndex, entity_keys_of
 from aicso.store.alert_store import AlertStore
@@ -79,6 +87,7 @@ class MergeSplitEngine:
         scfg: SystemOneConfig,
         index: CaseRoutingIndex,
         fallback: LocalFallback,
+        cache_invalidator=None,  # Callable[[str], int]：merge后清决策缓存指向
     ):
         self.case_store = case_store
         self.alert_store = alert_store
@@ -86,6 +95,10 @@ class MergeSplitEngine:
         self.scfg = scfg
         self.index = index
         self.fallback = fallback
+        self.cache_invalidator = cache_invalidator
+        # 并发守卫：幂等检查与update_relation之间有多个await，并发请求
+        # 可双双通过产生双份时间线事件/处置样本（review #56发现）
+        self._merge_lock = asyncio.Lock()
         # 人工处置样本（#51）：最贵的标注数据，作为few-shot证据进后续裁决
         self.disposition_samples: list[dict] = []
 
@@ -121,7 +134,12 @@ class MergeSplitEngine:
         rows = await self.alert_store.db.fetch_all(
             """
             SELECT a1.case_id AS case_a, a2.case_id AS case_b,
-                   a1.src_ip AS s1, a1.dst_ip AS d1
+                   CASE
+                     WHEN a1.src_ip = a2.src_ip THEN a1.src_ip
+                     WHEN a1.src_ip = a2.dst_ip THEN a1.src_ip
+                     WHEN a1.dst_ip = a2.src_ip THEN a1.dst_ip
+                     WHEN a1.dst_ip = a2.dst_ip THEN a1.dst_ip
+                   END AS shared_ip
             FROM alerts a1
             JOIN alerts a2
               ON a1.case_id < a2.case_id
@@ -134,16 +152,19 @@ class MergeSplitEngine:
              AND c2.merged_into IS NULL
              AND c2.status NOT IN ('closed', 'resolved')
             WHERE a1.src_ip IS NOT NULL OR a1.dst_ip IS NOT NULL
+            ORDER BY a1.case_id, a2.case_id
             LIMIT 5000
             """,
         )
         pair_keys: dict[tuple[str, str], set[str]] = {}
         for row in rows:
+            shared_ip = row["shared_ip"]
+            if not shared_ip:
+                continue
+            # 证据链只记真实join命中的IP：join可能仅因dst命中，把src也算
+            # "共享"会虚增证据与min_shared预筛（review #56发现12）
             pair = (row["case_a"], row["case_b"])
-            keys = pair_keys.setdefault(pair, set())
-            for ip in (row["s1"], row["d1"]):
-                if ip:
-                    keys.add(f"ip:{ip}")
+            pair_keys.setdefault(pair, set()).add(f"ip:{shared_ip}")
         pairs = [
             CandidatePair(case_a=a, case_b=b, shared_entities=sorted(keys),
                           source="cold")
@@ -281,6 +302,12 @@ class MergeSplitEngine:
         """
         if primary_id == absorbed_id:
             return {"ok": False, "reason": "same_case"}
+        async with self._merge_lock:
+            return await self._merge_locked(
+                primary_id, absorbed_id, reason=reason, evidence=evidence, actor=actor)
+
+    async def _merge_locked(self, primary_id: str, absorbed_id: str,
+                            reason: str, evidence: dict | None, actor: str) -> dict:
         absorbed = await self.case_store.get(absorbed_id)
         if not absorbed:
             return {"ok": False, "reason": "absorbed_not_found"}
@@ -315,6 +342,17 @@ class MergeSplitEngine:
         if actor == "human":
             # 先于deactivate：absorbed实体尚在索引，处置样本才带得上实体
             self._record_disposition(primary_id, absorbed_id, reason, evidence)
+
+        # §8"主Case吸收对方告警/时间线/实体"：absorbed独有实体转移到主Case
+        # 槽位，fallback pair键改挂主Case——只deactivate不转移，absorbed独有
+        # 实体的新告警会绕过主Case新建（重启前后路由行为不一致，#56发现7）
+        absorbed_entities = sorted(self.index.case_entities(absorbed_id))
+        if absorbed_entities:
+            self.index.record_hit(primary_id, absorbed_entities)
+        self.fallback.reassign(absorbed_id, primary_id)
+        # 决策缓存里指向absorbed的条目全部失效（防TTL窗口内"复活"已并Case）
+        if self.cache_invalidator is not None:
+            self.cache_invalidator(absorbed_id)
 
         # 路由状态清理：被并Case退出候选（重启重建由merged_into过滤兜底）
         self.index.deactivate(absorbed_id)
@@ -383,13 +421,23 @@ class MergeSplitEngine:
             )
 
         first = _alert_from_row(rows[0])
+        # severity容错解析 + 继承severity→priority/SLA映射（与_create_case一致，
+        # 此前split出的Case一律P3且无SLA，DB脏值还会直接500——#56发现）
+        try:
+            severity = CaseSeverity(origin["severity"])
+        except ValueError:
+            severity = CaseSeverity.MEDIUM
         new_case = Case(
             case_id=f"CSO-{datetime.utcnow().strftime('%Y%m%d')}-{uuid.uuid4().hex[:12].upper()}",
             title=new_title or f"{origin['title']} (拆分)",
-            severity=CaseSeverity(origin["severity"]),
+            severity=severity,
             status=CaseStatus.NEW,
+            priority=SEVERITY_PRIORITY_MAP.get(severity, CasePriority.P3),
             metadata={"routing": {"split_from": case_id, "reason": reason}},
         )
+        sla_mins = SLA_CONFIG.get(new_case.priority, (0, 0))[0]
+        if sla_mins > 0:
+            new_case.sla_deadline = datetime.utcnow() + timedelta(minutes=sla_mins)
         new_case.split_from = case_id
         new_case.record_case_created(source=f"split_from_{case_id}")
         await self.case_store.create(new_case)
@@ -499,13 +547,17 @@ class MergeSplitEngine:
             else:  # case_split：原case此前因哪些实体合并过→这些类型被拆分
                 for t in case_merge_types.get(row["case_id"], set()):
                     split[t] = split.get(t, 0) + 1
+                # 一次性失效：同一case后续再split不重复计数——
+                # 否则split次数可超merge次数，存活率算出负值（#56发现14）
+                case_merge_types.pop(row["case_id"], None)
         types = sorted(set(merged) | set(split))
         report = {}
         for t in types:
             m, s = merged.get(t, 0), split.get(t, 0)
+            survival = max(0.0, round(1 - s / m, 2)) if m else None
             report[t] = {
                 "merged": m, "split": s,
-                "survival": round(1 - s / m, 2) if m else None,
+                "survival": survival,
             }
         return {
             "generated_at": datetime.utcnow().isoformat(),

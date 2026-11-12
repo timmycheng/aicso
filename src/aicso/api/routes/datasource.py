@@ -57,7 +57,7 @@ async def api_datasource_status(state: AppState = Depends(get_state)):
     """查看所有已连接数据源的运行状态"""
     if not state.datasource_manager:
         return {"datasources": [], "message": "数据源管理器未启动"}
-    return {"datasources": state.datasource_manager.list_status()}
+    return {"datasources": await state.datasource_manager.list_status()}
 
 
 # --- 映射试算（issue #35 易用性：样例消息→归一化预览） ---
@@ -67,21 +67,32 @@ async def api_test_mapping(request: Request):
     """schema映射试算：粘贴样例消息，预览归一化结果与警告清单"""
     from aicso.mapping.engine import SchemaMapper, generated_alert_id
 
-    body = await request.json()
+    # 畸形输入统一400而非500（此前非法JSON/非str sample直接抛异常，#56发现39）
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="请求体不是合法JSON")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="请求体必须是JSON对象")
     sample = body.get("sample", "")
     mapper_config = body.get("config", {}) or {}
+    if not isinstance(sample, str) or not isinstance(mapper_config, dict):
+        raise HTTPException(status_code=400, detail="sample必须是字符串、config必须是对象")
     if not sample.strip():
-        return {"error": "sample必填：粘贴一条样例消息JSON"}
+        raise HTTPException(status_code=400, detail="sample必填：粘贴一条样例消息JSON")
 
     mapper = SchemaMapper(mapper_config, default_source="preview")
-    events = mapper.expand_message(sample)
-    results = []
-    for e in events:
-        alert, warnings = mapper.normalize(e, fallback_alert_id=generated_alert_id("preview"))
-        results.append({
-            "alert": alert.model_dump(mode="json"),
-            "warnings": warnings,
-        })
+    try:
+        events = mapper.expand_message(sample)
+        results = []
+        for e in events:
+            alert, warnings = mapper.normalize(e, fallback_alert_id=generated_alert_id("preview"))
+            results.append({
+                "alert": alert.model_dump(mode="json"),
+                "warnings": warnings,
+            })
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"试算失败: {e}")
     return {
         "events": len(events),
         "results": results,
@@ -139,10 +150,15 @@ async def _infer_from_samples(samples: list) -> dict:
 @router.post("/api/suggest-mapping")
 async def api_suggest_mapping(request: Request):
     """从粘贴样本推断映射草稿（系统提议，人工确认落盘）"""
-    body = await request.json()
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="请求体不是合法JSON")
+    if not isinstance(body, dict) or not isinstance(body.get("samples", []), list):
+        raise HTTPException(status_code=400, detail="body必须是含samples数组的JSON对象")
     samples = body.get("samples", [])
     if not samples:
-        return {"error": "samples必填：JSON对象/消息串列表（≤50条）"}
+        raise HTTPException(status_code=400, detail="samples必填：JSON对象/消息串列表（≤50条）")
     return await _infer_from_samples(samples)
 
 
@@ -153,8 +169,16 @@ async def api_suggest_mapping_live(name: str, request: Request,
     ds_config = state.config.datasources.get(name)
     if not ds_config:
         raise HTTPException(status_code=404, detail=f"数据源不存在: {name}")
-    body = await request.json() if request.headers.get("content-length") else {}
-    limit = int((body or {}).get("limit", 50))
+    try:
+        body = await request.json() if request.headers.get("content-length") else {}
+    except Exception:
+        raise HTTPException(status_code=400, detail="请求体不是合法JSON")
+    raw_limit = (body or {}).get("limit", 50) if isinstance(body, dict) else 50
+    try:
+        limit = int(raw_limit)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail=f"limit必须是整数，收到: {raw_limit!r}")
+    limit = min(max(limit, 1), 100)
 
     if ds_config.type == "kafka":
         from aicso.mapping.suggest import sample_kafka

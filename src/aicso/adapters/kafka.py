@@ -62,11 +62,23 @@ class KafkaAdapter(DataSourceAdapter):
         self._mapper = SchemaMapper({}, default_source="kafka")
         # 本批待提交位点 {TopicPartition: next_offset}——批次处理成功后由commit()提交
         self._pending_offsets: dict = {}
+        # 本批起始位点——失败批rewind()回退用（不回退则下一次成功commit
+        # 会永久跳过失败消息，at-least-once失效，review #56发现17）
+        self._batch_start_offsets: dict = {}
 
     async def connect(self, config: dict) -> bool:
         """连接Kafka"""
         self._config = config
         self._mapper = SchemaMapper(config, default_source="kafka")
+        # 重连前先停掉旧实例：connect失败重试路径直接覆盖self._consumer
+        # 会泄漏底层网络资源（review #56发现）
+        if self._consumer is not None:
+            try:
+                await self._consumer.stop()
+            except Exception:
+                pass
+            self._consumer = None
+            self._connected = False
         try:
             from aiokafka import AIOKafkaConsumer
 
@@ -123,6 +135,7 @@ class KafkaAdapter(DataSourceAdapter):
 
         alerts = []
         self._pending_offsets = {}
+        self._batch_start_offsets = {}
         try:
             # getmany批量消费；单条消息经统一映射引擎展开（信封/数组）
             data = await self._consumer.getmany(timeout_ms=poll_timeout, max_records=max_batch)
@@ -130,7 +143,9 @@ class KafkaAdapter(DataSourceAdapter):
             for tp, messages in data.items():
                 for msg in messages:
                     raw_text = msg.value
-                    # 记录本批最高位点（commit提交 next_offset）
+                    # 记录本批起始位点（首条）与最高位点（commit提交 next_offset）
+                    if tp not in self._batch_start_offsets:
+                        self._batch_start_offsets[tp] = msg.offset
                     self._pending_offsets[tp] = msg.offset + 1
                     if message_format == "json":
                         alerts.extend(self._mapper.expand_message(raw_text))
@@ -175,7 +190,24 @@ class KafkaAdapter(DataSourceAdapter):
         finally:
             self._pending_offsets = {}
 
-    def stats(self) -> dict:
+    async def rewind(self) -> bool:
+        """失败批回退：seek回本批起始位点，下一轮poll重新投递（at-least-once）
+
+        getmany单调前进内存消费位置，失败后仅"不commit"挡不住位点前进——
+        必须显式seek回批首（review #56发现17）。
+        """
+        if not self._batch_start_offsets or not self._consumer:
+            return False
+        try:
+            for tp, offset in self._batch_start_offsets.items():
+                self._consumer.seek(tp, offset)
+            logger.info("kafka.rewound", partitions=len(self._batch_start_offsets))
+            return True
+        except Exception as e:
+            logger.error("kafka.rewind_failed", error=str(e))
+            return False
+
+    async def stats(self) -> dict:
         """consumer lag 统计（highwater - 当前消费位点，按分区）"""
         if not self._consumer or not self._connected:
             return {"total_lag": None, "partitions": {}}
@@ -185,7 +217,9 @@ class KafkaAdapter(DataSourceAdapter):
             for tp in self._consumer.assignment():
                 try:
                     high = self._consumer.highwater(tp)
-                    pos = self._consumer.position(tp)
+                    # aiokafka position() 是协程，未await会TypeError被吞、
+                    # lag恒0掩盖真实积压（review #56发现18）
+                    pos = await self._consumer.position(tp)
                 except Exception:
                     continue
                 if high is None or pos is None:

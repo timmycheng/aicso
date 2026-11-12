@@ -35,7 +35,13 @@
 
   /* ---------- 相对时间 ---------- */
   function relativeTime(iso) {
-    const then = new Date(iso).getTime();
+    // 服务端时间戳是naive-UTC（datetime.utcnow().isoformat()），必须按UTC
+    // 解析——按浏览器本地时区解析会让东八区用户看到"8小时前"（#56发现35）
+    let then = new Date(iso).getTime();
+    if (isNaN(then)) return iso;
+    if (!/[Zz]|[+-]\d{2}:?\d{2}$/.test(iso)) {
+      then = new Date(iso + "Z").getTime();
+    }
     if (isNaN(then)) return iso;
     const diff = Date.now() - then;
     if (diff < 0) return "刚刚";
@@ -75,11 +81,15 @@
   if (chipRoot) {
     const render = (m) => {
       const degraded = !!m.degraded;
+      const overload = !!m.overload;
+      // backlog_age_ms 在 status().metrics 嵌套层（读顶层恒undefined显示0，#56发现34）
+      const backlog = m.metrics ? m.metrics.backlog_age_ms : m.backlog_age_ms;
+      const state = degraded ? "降级模式" : (overload ? "过载模式" : "System One 正常");
+      const cls = degraded || overload ? " warn" : "";
       chipRoot.innerHTML =
-        '<span class="chip' + (degraded ? " warn" : "") + '"><span class="dot"></span>' +
-        (degraded ? "降级模式" : "System One 正常") + "</span>" +
+        '<span class="chip' + cls + '"><span class="dot"></span>' + state + "</span>" +
         '<span class="chip">队列 ' + m.queue_depth + "/" + m.queue_max + "</span>" +
-        '<span class="chip">积压 ' + (m.backlog_age_ms == null ? "0" : m.backlog_age_ms) + "ms</span>";
+        '<span class="chip">积压 ' + (backlog == null ? "0" : backlog) + "ms</span>";
     };
     const refresh = async () => {
       try {

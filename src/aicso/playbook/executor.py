@@ -30,6 +30,7 @@ class PlaybookExecutor:
 
         logger.info("playbook.started", run_id=run.run_id, playbook=playbook.name, case_id=case_id)
 
+        rejected = False
         for i, step in enumerate(playbook.steps):
             step_key = f"step_{i}"
             run.steps_status[step_key] = {"status": "pending", "step": step.name}
@@ -44,6 +45,7 @@ class PlaybookExecutor:
                     reason=f"Playbook step: {step.name}",
                 )
                 if not result.approved:
+                    rejected = True
                     run.steps_status[step_key]["status"] = "skipped"
                     run.steps_status[step_key]["reason"] = result.reason
                     logger.info("playbook.step_skipped", run_id=run.run_id, step=step.name)
@@ -54,6 +56,8 @@ class PlaybookExecutor:
 
         run.status = RunStatus.COMPLETED
         run.completed_at = datetime.utcnow()
-        run.approval_status = ApprovalStatus.APPROVED
+        # 审计语义：有被拒/超时步骤的run不得标APPROVED（此前无条件APPROVED，
+        # 审计失真，review #56发现51）
+        run.approval_status = ApprovalStatus.REJECTED if rejected else ApprovalStatus.APPROVED
         logger.info("playbook.completed", run_id=run.run_id)
         return run

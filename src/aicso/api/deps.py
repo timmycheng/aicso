@@ -56,7 +56,8 @@ async def _recover_routing(state: AppState) -> None:
 
 async def init_app_state(config_path: str = "config.yaml") -> AppState:
     config = load_config(config_path)
-    db = Database(profile=config.database.profile)
+    # database.url 接线（此前死配置）：sqlite url 中的相对路径相对进程CWD
+    db = Database(profile=config.database.profile, url=config.database.url)
     await db.connect()
     await db.init_tables()
     db.enable_write_buffer(batch_size=50, flush_interval=0.1)
@@ -100,6 +101,7 @@ async def init_app_state(config_path: str = "config.yaml") -> AppState:
         scfg=scfg,
         index=router_engine.index,
         fallback=router_engine.fallback,
+        cache_invalidator=router_engine.invalidate_cache_for,
     )
 
     orchestrator = Orchestrator(
