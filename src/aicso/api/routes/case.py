@@ -235,6 +235,45 @@ async def api_case_detail(case_id: str, state: AppState = Depends(get_state)):
     return {"case": case, "alerts": alerts, "events": events}
 
 
+@router.get("/api/{case_id}/correlations")
+async def api_case_correlations(case_id: str, state: AppState = Depends(get_state)):
+    """关联链（issue #48）：合并/拆分关系与证据链的结构化视图
+
+    "哪怕很久远的关联也必须有说明"——每条链路携带事件detail中的证据
+    （共享实体分类/时间跨度/模型置信度理由），审计可回溯为什么关联。
+    """
+    case = await state.case_store.get(case_id)
+    if not case:
+        raise HTTPException(status_code=404, detail="Case不存在")
+    events = await state.case_store.get_events(case_id)
+    chain = []
+    for event in events:
+        if event.get("event_type") not in (
+            "case_merged", "merged_into", "case_split", "case_split_created",
+        ):
+            continue
+        detail = event.get("detail")
+        if isinstance(detail, str):
+            try:
+                detail = json.loads(detail)
+            except (json.JSONDecodeError, TypeError):
+                detail = {}
+        chain.append({
+            "event_type": event["event_type"],
+            "created_at": event.get("created_at"),
+            "actor": event.get("actor"),
+            "detail": detail,
+        })
+    return {
+        "case_id": case_id,
+        "relations": {
+            "merged_into": case.get("merged_into"),
+            "split_from": case.get("split_from"),
+        },
+        "chain": chain,
+    }
+
+
 # --- 运营操作API（设计§7 OpsRecord） ---
 
 @router.get("/api/{case_id}/context")

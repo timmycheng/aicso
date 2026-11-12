@@ -25,14 +25,15 @@ class AlertStore:
         cursor = await self.db.execute(
             """INSERT OR IGNORE INTO alerts (alert_id, source, rule_id, rule_name, severity,
                timestamp, src_ip, dst_ip, src_port, dst_port, protocol,
-               raw_log, enriched_data, case_id, is_false_positive,
+               raw_log, enriched_data, entities, case_id, is_false_positive,
                created_at, routed_at, routing_source)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 alert.alert_id, alert.source, alert.rule_id, alert.rule_name,
                 alert.severity, alert.timestamp.isoformat(),
                 alert.src_ip, alert.dst_ip, alert.src_port, alert.dst_port,
                 alert.protocol, alert.raw_log, json.dumps(alert.enriched_data),
+                json.dumps(alert.entities or {}),
                 alert.case_id, alert.is_false_positive,
                 alert.created_at.isoformat(), None, None,
             ),
