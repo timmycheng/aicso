@@ -120,9 +120,11 @@ async def _infer_from_samples(samples: list) -> dict:
 
     suggestion = suggest_mapping(records)
     # 试算验证：草稿配置跑全部样本，看警告与实体覆盖
+    # severity_mapping一并进试算（issue #57：刻度/词表问题要能在试算中暴露）
     config = {"schema": "generic",
               "field_mapping": suggestion["fields"],
-              "entity_mapping": suggestion["entity_mapping"]}
+              "entity_mapping": suggestion["entity_mapping"],
+              "severity_mapping": suggestion.get("severity_mapping", {})}
     mapper = SchemaMapper(config, default_source="suggest")
     warning_total = 0
     entity_hits = 0
@@ -136,6 +138,7 @@ async def _infer_from_samples(samples: list) -> dict:
         previews.append({"alert_id": alert.alert_id,
                          "src_ip": alert.src_ip, "dst_ip": alert.dst_ip,
                          "entities": alert.entities,
+                         "severity": alert.severity,
                          "timestamp": str(alert.timestamp),
                          "warnings": warnings})
     suggestion["validation"] = {

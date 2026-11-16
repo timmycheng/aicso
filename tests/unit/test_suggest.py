@@ -120,3 +120,67 @@ async def test_sample_kafka_temp_group_no_commit():
     assert samples[0]["SourceIp"] == "172.18.39.5", "原始消息应经expand_message展开"
     assert created["consumer"].started and created["consumer"].stopped
     assert created["consumer"].commits == 0, "采样绝不commit位点"
+
+
+class TestSeveritySuggestion:
+    """severity建议：数值刻度映射+词表归一（issue #57）"""
+
+    def test_small_numeric_scale_gets_mapping(self):
+        """1-5小刻度：建议severity_mapping（否则引擎默认阈值全落info）"""
+        samples = [
+            {"level": i, "msg": f"m{i}"} for i in range(1, 6)
+        ]
+        result = suggest_mapping(samples)
+        assert result["fields"]["severity_int"] == "level"
+        mapping = result["severity_mapping"]
+        assert mapping == {1: "info", 2: "low", 3: "medium", 4: "high", 5: "critical"}
+        assert any("severity_mapping" in n for n in result["notes"])
+
+        # 引擎按建议映射归一：3→medium（无映射时1-5全落info）
+        from aicso.mapping.engine import SchemaMapper
+        mapper = SchemaMapper({
+            "field_mapping": {"severity_int": "level"},
+            "severity_mapping": mapping,
+        })
+        alert, warnings = mapper.normalize({"level": 3}, fallback_alert_id="x")
+        assert alert.severity == "medium"
+        assert not any("严重度" in w for w in warnings)
+
+    def test_text_synonyms_normalized_to_canonical(self):
+        """warning/error/notice/中文词 → severity_mapping归一（不再降级medium）"""
+        samples = [
+            {"severity": "Warning"}, {"severity": "error"}, {"severity": "notice"},
+            {"severity": "严重"}, {"severity": "high"},  # 规范词混在其中
+        ]
+        result = suggest_mapping(samples)
+        assert result["fields"]["severity_text"] == "severity"
+        mapping = result["severity_mapping"]
+        assert mapping == {"Warning": "medium", "error": "high",
+                           "notice": "medium", "严重": "critical"}
+        # 规范词不进映射
+        assert "high" not in mapping
+
+        # 引擎按映射归一，不再有"无法识别严重度"警告
+        from aicso.mapping.engine import SchemaMapper
+        mapper = SchemaMapper({
+            "field_mapping": {"severity_text": "severity"},
+            "severity_mapping": mapping,
+        })
+        alert, warnings = mapper.normalize({"severity": "Warning"}, fallback_alert_id="x")
+        assert alert.severity == "medium"
+        alert, warnings = mapper.normalize({"severity": "严重"}, fallback_alert_id="x")
+        assert alert.severity == "critical"
+        assert not any("无法识别严重度" in w for w in warnings)
+
+    def test_wide_numeric_scale_no_mapping(self):
+        """0-100连续刻度：不加映射（引擎默认阈值本就面向它）"""
+        samples = [{"level": v} for v in (5, 25, 50, 75, 95)]
+        result = suggest_mapping(samples)
+        assert result["fields"]["severity_int"] == "level"
+        assert result["severity_mapping"] == {}
+
+    def test_unknown_text_values_flagged(self):
+        """无法识别的severity值进notes提示人工核对"""
+        samples = [{"severity": "weird_level"}, {"severity": "high"}]
+        result = suggest_mapping(samples)
+        assert any("weird_level" in n for n in result["notes"])
