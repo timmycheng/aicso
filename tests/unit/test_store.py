@@ -134,3 +134,38 @@ class TestAlertStore:
             await alert_store.create(Alert(alert_id=f"A-{i:03d}", source="test"))
         count = await alert_store.count()
         assert count == 3
+
+
+class TestCaseSearch:
+    """Case列表搜索 + count口径一致（issue #57：PRD P0/total口径）"""
+
+    @pytest.mark.asyncio
+    async def test_keyword_and_count_consistency(self, db, case_store):
+        for i, (title, assignee) in enumerate([
+            ("SSH暴破事件", "alice"),
+            ("钓鱼邮件事件", "bob"),
+            ("端口扫描", None),
+        ]):
+            case = Case(case_id=f"CSO-S{i}", title=title,
+                        severity=CaseSeverity.MEDIUM, status=CaseStatus.NEW,
+                        assignee_id=assignee)
+            case.record_case_created()
+            await case_store.create(case)
+
+        rows = await case_store.list_cases(keyword="暴破")
+        assert [r["case_id"] for r in rows] == ["CSO-S0"]
+        assert await case_store.count(keyword="暴破") == 1
+
+        rows = await case_store.list_cases(keyword="CSO-S2")
+        assert [r["case_id"] for r in rows] == ["CSO-S2"]
+
+        # assignee过滤此前count完全忽略——口径不一致（issue #57）
+        rows = await case_store.list_cases(assignee="alice")
+        assert len(rows) == 1
+        assert await case_store.count(assignee="alice") == 1
+
+        # 组合过滤：列表与计数严格一致
+        assert await case_store.count(status="new", severity="medium", keyword="扫描") == 1
+        rows = await case_store.list_cases(
+            status="new", severity="medium", keyword="扫描")
+        assert len(rows) == 1

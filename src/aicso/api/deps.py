@@ -102,6 +102,7 @@ async def init_app_state(config_path: str = "config.yaml") -> AppState:
         index=router_engine.index,
         fallback=router_engine.fallback,
         cache_invalidator=router_engine.invalidate_cache_for,
+        ops_service=ops_service,  # merge/split落OpsRecord（设计§7，issue #57）
     )
 
     orchestrator = Orchestrator(
@@ -111,6 +112,7 @@ async def init_app_state(config_path: str = "config.yaml") -> AppState:
         ops_service=ops_service,
         max_concurrent_triage=config.routing.s2_concurrency,
         llm_enabled=config.llm.enabled,
+        review_queue_enabled=scfg.review_queue_enabled,
     )
     router_engine.on_new_case = orchestrator.handle_new_case
     orchestrator.start()

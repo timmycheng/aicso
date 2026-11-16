@@ -17,6 +17,7 @@ from aicso.models.alert import Alert
 from aicso.systemone.client import (
     Choice,
     Noul,
+    Score,
     SystemOneClient,
     SystemOneError,
 )
@@ -39,9 +40,25 @@ ATTACK_CATEGORIES = {
 SEVERITY_OPTIONS = {
     "critical": "危急：正在进行的重大入侵/数据泄露",
     "high": "高：确认的攻击行为，需尽快处置",
-    "medium": "中：可疑行为，存在风险",
+    "medium": "中：告警可信但影响可控",
     "low": "低：轻微可疑，常规关注",
     "info": "信息：正常记录或误报",
+}
+
+# Case优先级评分刻度（设计§6：优先级=Score(severity+资产重要性)，issue #57）
+# 列表顺序即评分序：score=1 → P1（最高） … score=5 → P5（最低）
+PRIORITY_SCORE_CRITERIA = [
+    "P1：立即响应——正在进行的入侵、核心资产失陷",
+    "P2：数小时内响应——确认攻击、重要资产受影响",
+    "P3：当日处理——可疑行为、影响可控",
+    "P4：常规处理——轻微可疑、常规排查",
+    "P5：记录即可——信息记录或误报",
+]
+
+# 资产criticality取值 → 优先级硬上限（资产重要性兜底钳制）
+ASSET_CRITICALITY_PRIORITY_CAP = {
+    "critical": 2,   # 核心资产事件至少P2
+    "high": 3,       # 重要资产事件至少P3
 }
 
 
@@ -54,6 +71,8 @@ class TriageJudgment:
     category_confidence: float | None = None
     severity: str | None = None            # 建议严重度
     severity_confidence: float | None = None
+    priority_score: int | None = None      # 优先级评分1-5对应P1-P5（#57 §6）
+    priority_confidence: float | None = None
     needs_review: bool = False             # 任一判定低于阈值 → 人工复核
     overall_confidence: float = 0.0
     detail: dict = field(default_factory=dict)
@@ -75,10 +94,13 @@ class S2Dispatcher:
         case_id: str,
         case_title: str,
         alerts: list[Alert],
+        asset_criticality: str | None = None,
     ) -> TriageJudgment | None:
         """新Case初始研判的判定型任务集（一次请求并行多问题）
 
         System One不可用时返回None（调用方转人工复核）。
+        asset_criticality（设计§6）：涉及资产的重要性（criticality值），
+        作为优先级Score题的输入——资产重要性缺失时该输入缺省。
         """
         if not self._client or not alerts:
             return None
@@ -92,6 +114,8 @@ class S2Dispatcher:
             f"安全事件 {case_id}：{case_title}\n"
             f"关联告警{len(alerts)}条（前{len(alert_lines)}条）：\n" + "\n".join(alert_lines)
         )
+        if asset_criticality:
+            state += f"\n涉及资产重要性: {asset_criticality}"
 
         try:
             response = await self._client.system_one(
@@ -111,6 +135,15 @@ class S2Dispatcher:
                         instructions="综合判断，该事件应定为什么严重级别？",
                         criteria=SEVERITY_OPTIONS,
                     ),
+                    # 设计§6：Case优先级走Score判定（输入severity+资产重要性），
+                    # 替代"severity映射表拍优先级"（issue #57）
+                    "case_priority": Score(
+                        instructions=(
+                            "综合告警严重度与涉及资产的重要性，为该事件的处置"
+                            "优先级评分（1分=P1最高 … 5分=P5最低）："
+                        ),
+                        criteria=PRIORITY_SCORE_CRITERIA,
+                    ),
                 },
             )
         except SystemOneError as e:
@@ -121,6 +154,7 @@ class S2Dispatcher:
         tp = answers.get("is_true_positive")
         cat = answers.get("attack_category")
         sev = answers.get("severity")
+        prio = answers.get("case_priority")
 
         threshold = self.scfg.confidence_threshold
         judgment = TriageJudgment(
@@ -130,6 +164,8 @@ class S2Dispatcher:
             category_confidence=cat.confidence if cat else None,
             severity=sev.choice if sev else None,
             severity_confidence=sev.confidence if sev else None,
+            priority_score=self._parse_priority_score(prio.score if prio else None),
+            priority_confidence=prio.confidence if prio else None,
             detail={"model": response.model, "input_tokens": response.input_tokens},
         )
 
@@ -138,6 +174,7 @@ class S2Dispatcher:
                 judgment.tp_confidence,
                 judgment.category_confidence,
                 judgment.severity_confidence,
+                judgment.priority_confidence,
             ) if c is not None
         ]
         judgment.overall_confidence = (
@@ -148,6 +185,7 @@ class S2Dispatcher:
             or any(c < threshold for c in confidences)
             or judgment.category not in ATTACK_CATEGORIES
             or judgment.severity not in SEVERITY_OPTIONS
+            or judgment.priority_score is None
         )
         logger.info(
             "s2.judged",
@@ -158,3 +196,21 @@ class S2Dispatcher:
             needs_review=judgment.needs_review,
         )
         return judgment
+
+    @staticmethod
+    def _parse_priority_score(score) -> int | None:
+        """Score应答 → 1-5优先级评分（1=P1最高 … 5=P5最低）
+
+        兼容两种刻度：1..5评分原值，或(0,1)开区间归一值按5档还原；
+        非数值/越界返回None（由needs_review兜底转人工）。
+        """
+        if score is None:
+            return None
+        try:
+            value = float(score)
+        except (TypeError, ValueError):
+            return None
+        if 0 <= value < 1:
+            value = value * 4 + 1  # 归一刻度还原到1..5
+        value = int(round(value))
+        return value if 1 <= value <= 5 else None

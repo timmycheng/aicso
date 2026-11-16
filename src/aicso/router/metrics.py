@@ -31,10 +31,27 @@ class RouterMetrics:
         self.queue_overload_events = 0   # 进入95%过载模式次数（§5.7）
         self.low_confidence_total = 0   # 低于阈值转复核
         self._latencies: deque[float] = deque(maxlen=latency_samples)
+        # 置信度直方图（§11判定质量分布，issue #57）：5桶，边界左闭右开
+        self._confidence_buckets = [0] * 5
         self.oldest_pending_since: datetime | None = None  # 最老未路由告警入队时间
 
     def record_latency(self, latency_ms: float) -> None:
         self._latencies.append(latency_ms)
+
+    def record_confidence(self, confidence: float | None) -> None:
+        """记录判定置信度进直方图（None/0不记——未产生判定的决策无质量可言）"""
+        if not confidence:
+            return
+        idx = min(int(confidence * 5), 4)  # 1.0落最后一桶
+        self._confidence_buckets[idx] += 1
+
+    def confidence_histogram(self) -> dict:
+        buckets = self._confidence_buckets
+        return {
+            "0.0-0.2": buckets[0], "0.2-0.4": buckets[1],
+            "0.4-0.6": buckets[2], "0.6-0.8": buckets[3],
+            "0.8-1.0": buckets[4],
+        }
 
     def latency_percentiles(self) -> dict:
         if not self._latencies:
@@ -77,6 +94,7 @@ class RouterMetrics:
             "queue_max": queue_max,
             "backlog_age_ms": self.backlog_age_ms(),
             "latency": self.latency_percentiles(),
+            "confidence_histogram": self.confidence_histogram(),
         }
         # 并入率：汇入已有Case占已路由的比例
         if self.routed_total:

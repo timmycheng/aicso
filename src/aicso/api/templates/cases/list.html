@@ -25,8 +25,9 @@
             <option value="{{ s }}" {% if filter_severity == s %}selected{% endif %}>{{ s | upper }}</option>
             {% endfor %}
         </select>
+        <input type="search" name="q" value="{{ filter_q }}" placeholder="搜索标题 / Case ID" style="min-width:180px;">
         <button class="btn sm" type="submit">过滤</button>
-        {% if filter_status or filter_severity %}
+        {% if filter_status or filter_severity or filter_q %}
         <a href="/cases" class="btn sm">清除</a>
         {% endif %}
     </form>

@@ -33,18 +33,22 @@ async def case_list(
     request: Request,
     status: str | None = None,
     severity: str | None = None,
+    q: str | None = None,
     limit: int = 50,
     state: AppState = Depends(get_state),
 ):
     limit = min(max(int(limit), 1), 200)  # 钳制：负数在SQLite等于无上限
-    cases = await state.case_store.list_cases(status=status, severity=severity, limit=limit)
-    total = await state.case_store.count(status=status, severity=severity)
+    cases = await state.case_store.list_cases(
+        status=status, severity=severity, keyword=q, limit=limit)
+    total = await state.case_store.count(
+        status=status, severity=severity, keyword=q)
     return templates.TemplateResponse(
         request,
         "cases/list.html",
         {
             "cases": cases, "total": total,
             "filter_status": status, "filter_severity": severity,
+            "filter_q": q or "",
         },
     )
 
@@ -205,11 +209,13 @@ async def case_update(
 async def api_case_list(
     status: str | None = None,
     severity: str | None = None,
+    q: str | None = None,
     limit: int = 50,
     state: AppState = Depends(get_state),
 ):
     limit = min(max(int(limit), 1), 200)  # 钳制：负数在SQLite等于无上限
-    cases = await state.case_store.list_cases(status=status, severity=severity, limit=limit)
+    cases = await state.case_store.list_cases(
+        status=status, severity=severity, keyword=q, limit=limit)
     return {"cases": cases, "count": len(cases)}
 
 
