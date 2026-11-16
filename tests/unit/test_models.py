@@ -5,8 +5,12 @@ import pytest
 from aicso.models.alert import Alert
 from aicso.models.asset import Asset, AssetCriticality
 from aicso.models.case import (
+    EVENT_TYPE_COLORS,
+    EVENT_TYPE_ICONS,
+    EVENT_TYPE_LABELS,
     SEVERITY_PRIORITY_MAP,
     Case,
+    CaseEvent,
     CasePriority,
     CaseSeverity,
     CaseStatus,
@@ -145,3 +149,25 @@ class TestPlaybookModel:
         assert len(pb.steps) == 2
         assert pb.steps[0].auto is True
         assert pb.steps[1].approval_required is True
+
+
+class TestTimelineEventMeta:
+    """issue #57：新时间线事件类型须有中文label/icon/color"""
+
+    NEW_EVENT_TYPES = (
+        "s2_judgment", "routing_review", "ops_executed",
+        "case_merged", "merged_into", "case_split", "case_split_created",
+    )
+
+    def test_labels_icons_colors_covered(self):
+        for et in self.NEW_EVENT_TYPES:
+            assert et in EVENT_TYPE_LABELS, f"{et} 缺中文label"
+            assert et in EVENT_TYPE_ICONS, f"{et} 缺icon"
+            assert et in EVENT_TYPE_COLORS, f"{et} 缺color"
+            assert EVENT_TYPE_LABELS[et] != et  # 真中文，不是裸类型名
+
+    def test_case_event_display_props(self):
+        event = CaseEvent(event_id="e1", event_type="case_merged", actor="x",
+                          detail={})
+        assert event.label == "Case合并"
+        assert event.color == "#2e7d32"

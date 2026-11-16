@@ -144,6 +144,15 @@ EVENT_TYPE_LABELS: dict[str, str] = {
     "note_added": "添加备注",
     "asset_linked": "关联资产",
     "ioc_added": "添加IoC",
+    # 分流/合并拆分/运营事件（issue #57：此前缺中文label/icon/color，
+    # 详情页时间线显示裸事件类型名）
+    "s2_judgment": "S2判定",
+    "routing_review": "路由复核",
+    "ops_executed": "操作执行",
+    "case_merged": "Case合并",
+    "merged_into": "并入其他Case",
+    "case_split": "Case拆分",
+    "case_split_created": "拆分新建Case",
 }
 
 # 事件类型图标映射
@@ -175,6 +184,13 @@ EVENT_TYPE_ICONS: dict[str, str] = {
     "note_added": "&#128221;",
     "asset_linked": "&#127970;",
     "ioc_added": "&#128274;",
+    "s2_judgment": "&#129504;",
+    "routing_review": "&#128065;",
+    "ops_executed": "&#9881;",
+    "case_merged": "&#128257;",
+    "merged_into": "&#8618;",
+    "case_split": "&#9986;",
+    "case_split_created": "&#128196;",
 }
 
 # 事件类型颜色映射
@@ -206,6 +222,13 @@ EVENT_TYPE_COLORS: dict[str, str] = {
     "note_added": "#607d8b",
     "asset_linked": "#795548",
     "ioc_added": "#ff5722",
+    "s2_judgment": "#00bcd4",
+    "routing_review": "#ef6c00",
+    "ops_executed": "#7b1fa2",
+    "case_merged": "#2e7d32",
+    "merged_into": "#616161",
+    "case_split": "#e67e22",
+    "case_split_created": "#2980b9",
 }
 
 
