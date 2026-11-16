@@ -162,6 +162,21 @@ class RouterEngine:
         self.fp_signatures: dict[str, tuple[int, datetime]] = {}
         self.fp_ttl = timedelta(hours=routing_config.fp_ttl_hours)
 
+    # ---- 模式与降级语义（issue #57：degraded与local_mode拆分） ----
+
+    @property
+    def local_mode(self) -> bool:
+        """配置纯本地模式（system_one关闭/未配client）——配置选择，非故障"""
+        return self._client is None
+
+    def _is_degraded(self) -> bool:
+        """故障降级状态（S1配置启用但当前不可用）
+
+        local_mode是配置选择不算降级：此前两者混在一个_degraded里，
+        decision.degraded/degraded_total在纯本地部署下恒真，语义被稀释。
+        """
+        return self._degraded and self._client is not None
+
     # ---- 生命周期 ----
 
     async def start(self) -> None:
@@ -312,7 +327,7 @@ class RouterEngine:
                     alert, case_id, RoutingDecision(
                         alert_id=alert.alert_id, case_id=case_id,
                         decision=ROUTE_TO, source=SRC_CACHE,
-                        degraded=self._degraded,
+                        degraded=self._is_degraded(),
                         latency_ms=(time.monotonic() - started) * 1000,
                         detail={"cache": True},
                     ),
@@ -328,7 +343,7 @@ class RouterEngine:
                         alert, RoutingDecision(
                             alert_id=alert.alert_id, case_id="",
                             decision=NEW_CASE, source=SRC_FALLBACK,
-                            degraded=self._degraded,
+                            degraded=self._is_degraded(),
                             latency_ms=(time.monotonic() - started) * 1000,
                             candidates=0,
                         ),
@@ -527,7 +542,7 @@ class RouterEngine:
             decision = RoutingDecision(
                 alert_id=alert.alert_id, case_id=match.case_id,
                 decision=ROUTE_TO, source=SRC_FALLBACK,
-                degraded=self._degraded,
+                degraded=self._is_degraded(),
                 latency_ms=(time.monotonic() - started) * 1000,
                 candidates=len(candidates),
                 detail={"fallback_key": match.key},
@@ -537,7 +552,7 @@ class RouterEngine:
             alert, RoutingDecision(
                 alert_id=alert.alert_id, case_id="",
                 decision=NEW_CASE, source=SRC_FALLBACK,
-                degraded=self._degraded,
+                degraded=self._is_degraded(),
                 latency_ms=(time.monotonic() - started) * 1000,
                 candidates=len(candidates),
             ),
@@ -639,8 +654,9 @@ class RouterEngine:
         if decision.source == SRC_FALLBACK:
             self.metrics.fallback_total += 1
 
-        # 低置信度保守新建 → 记复核事件
-        if decision.detail.get("low_confidence"):
+        # 低置信度保守新建 → 记复核事件（review_queue_enabled=false时不写，
+        # 让配置真正生效；low_confidence_total指标照记不丢观测——issue #57）
+        if decision.detail.get("low_confidence") and self.scfg.review_queue_enabled:
             event = CaseEvent(
                 event_id=f"{case.case_id}-evt-{str(ULID())}",
                 event_type="routing_review",
@@ -699,12 +715,15 @@ class RouterEngine:
 
     def _finalize(self, decision: RoutingDecision) -> None:
         """持久化审计记录并更新指标"""
-        decision.degraded = decision.degraded or self._degraded
+        decision.degraded = decision.degraded or self._is_degraded()
         self.metrics.routed_total += 1
         if decision.decision == ROUTE_TO:
             self.metrics.route_to_total += 1
-        if decision.degraded:
+        # 仅故障降级计入degraded_total；local_mode是配置选择不算（issue #57）
+        if self._is_degraded():
             self.metrics.degraded_total += 1
+        # 置信度直方图（§11判定质量分布，issue #57）
+        self.metrics.record_confidence(decision.confidence)
         self.metrics.record_latency(decision.latency_ms)
         # 审计落库（异步fire-and-forget，失败不阻塞热路径）
         task = asyncio.create_task(self.routing_store.create(decision))
@@ -865,7 +884,11 @@ class RouterEngine:
     def status(self) -> dict:
         return {
             "system_one_enabled": self._client is not None,
-            "degraded": self._degraded,
+            # 语义拆分（issue #57）：local_mode=配置纯本地；degraded=故障降级；
+            # fallback_active=本地兜底路径当前接管中（local_mode/降级/过载任一）
+            "local_mode": self.local_mode,
+            "degraded": self._is_degraded(),
+            "fallback_active": self._degraded or self._overload,
             "overload": self._overload,
             "queue_depth": self._batcher.qsize(),
             "queue_max": self.rcfg.queue_max_size,

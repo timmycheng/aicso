@@ -88,6 +88,7 @@ class MergeSplitEngine:
         index: CaseRoutingIndex,
         fallback: LocalFallback,
         cache_invalidator=None,  # Callable[[str], int]：merge后清决策缓存指向
+        ops_service=None,        # OpsService：merge/split落OpsRecord（设计§7，issue #57）
     ):
         self.case_store = case_store
         self.alert_store = alert_store
@@ -96,6 +97,7 @@ class MergeSplitEngine:
         self.index = index
         self.fallback = fallback
         self.cache_invalidator = cache_invalidator
+        self.ops_service = ops_service
         # 并发守卫：幂等检查与update_relation之间有多个await，并发请求
         # 可双双通过产生双份时间线事件/处置样本（review #56发现）
         self._merge_lock = asyncio.Lock()
@@ -358,6 +360,21 @@ class MergeSplitEngine:
         self.index.deactivate(absorbed_id)
         self.fallback.deactivate(absorbed_id)
 
+        # 设计§7：合并也是Case操作，统一落OpsRecord（OpsAction.MERGE，
+        # 此前已定义无引用——issue #57）
+        if self.ops_service is not None:
+            from aicso.models.ops import ActorType, OpsAction
+
+            await self.ops_service.record_op(
+                primary_id,
+                actor=actor,
+                actor_type=ActorType.HUMAN if actor == "human" else ActorType.SYSTEM,
+                action=OpsAction.MERGE,
+                params={"absorbed": absorbed_id, "reason": reason},
+                result={"alerts_moved": moved},
+                summary=f"合并 {absorbed_id} → {primary_id}",
+            )
+
         logger.info("merge.executed", primary=primary_id, absorbed=absorbed_id,
                     alerts_moved=moved, actor=actor)
         return {"ok": True, "alerts_moved": moved}
@@ -464,6 +481,21 @@ class MergeSplitEngine:
             entities.extend(entity_keys_of(_alert_from_row(r)))
         self.index.add_case(new_case.case_id, new_case.title, entities)
         self.fallback.register(first, new_case.case_id)
+
+        # 设计§7：拆分统一落OpsRecord（OpsAction.SPLIT，issue #57）
+        if self.ops_service is not None:
+            from aicso.models.ops import ActorType, OpsAction
+
+            await self.ops_service.record_op(
+                case_id,
+                actor="merge_split_engine",
+                actor_type=ActorType.SYSTEM,
+                action=OpsAction.SPLIT,
+                params={"to": new_case.case_id, "reason": reason,
+                        "alert_ids": moved_ids},
+                result={"alerts_moved": moved},
+                summary=f"拆分 {case_id} → {new_case.case_id}",
+            )
 
         logger.info("split.executed", origin=case_id, new=new_case.case_id,
                     alerts_moved=moved)

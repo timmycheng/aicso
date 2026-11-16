@@ -21,6 +21,7 @@ from aicso.models.case import (
     Case,
     CaseEvent,
     CaseEventType,
+    CasePriority,
     CaseSeverity,
 )
 from aicso.router.engine import RouterEngine
@@ -45,6 +46,7 @@ class Orchestrator:
         ops_service=None,
         max_concurrent_triage: int = 3,
         llm_enabled: bool = True,
+        review_queue_enabled: bool = True,
     ):
         self.case_store = case_store
         self.alert_store = alert_store
@@ -54,6 +56,9 @@ class Orchestrator:
         self.router = router
         self.dispatcher = dispatcher
         self.ops_service = ops_service
+        # 复核队列开关（system_one.review_queue_enabled，issue #57：
+        # 配置此前声明未生效——关闭后复核事件不写时间线，只记日志）
+        self._review_queue_enabled = review_queue_enabled
         self._agents: dict[str, BaseAgent] = {}
         self._llm_enabled = llm_enabled
 
@@ -196,15 +201,20 @@ class Orchestrator:
 
             # ---- 判定型：System One ----
             judgment = None
+            asset_criticality = None
             if self.dispatcher and self.dispatcher.enabled:
+                # 设计§6：资产重要性作为优先级Score判定输入（issue #57）
+                asset_criticality = await self._asset_criticality(alerts)
                 judgment = await self.dispatcher.judge_triage(
                     case_id, case_data.get("title", ""), alerts,
+                    asset_criticality=asset_criticality,
                 )
                 if judgment is None:
                     # §6：失败重试一次，仍失败标needs_review——
                     # 此前静默跳过，判定维度缺失无人知晓（review #56发现15）
                     judgment = await self.dispatcher.judge_triage(
                         case_id, case_data.get("title", ""), alerts,
+                        asset_criticality=asset_criticality,
                     )
                     if judgment is None:
                         await self._record_needs_review(
@@ -218,7 +228,10 @@ class Orchestrator:
                     "判定型初始研判未执行：System One未启用，需人工研判"
                 )
             if judgment:
-                await self._apply_triage_judgment(case_id, case_data, judgment)
+                await self._apply_triage_judgment(
+                    case_id, case_data, judgment,
+                    asset_criticality=asset_criticality,
+                )
 
             # ---- 生成型：LLM 叙述摘要 ----
             if not self._llm_enabled:
@@ -271,8 +284,14 @@ class Orchestrator:
         fields.update(overrides)
         return Case(**fields)
 
-    async def _apply_triage_judgment(self, case_id: str, case_data: dict, judgment) -> None:
-        """应用System One判定：记录事件 + 高置信度自动修正严重度（Case随生长被修正，§3.2）"""
+    async def _apply_triage_judgment(self, case_id: str, case_data: dict,
+                                     judgment, asset_criticality=None) -> None:
+        """应用System One判定：记录事件 + 高置信度自动修正严重度/优先级（§3.2/§6）
+
+        优先级（issue #57）：Score判定（输入severity+资产重要性）高置信时
+        直接采用并记priority_changed事件；缺判/低置信回退severity映射表。
+        criticality=critical的资产事件至少P2（资产重要性兜底钳制）。
+        """
         event = CaseEvent(
             event_id=f"{case_id}-evt-{str(ULID())}",
             event_type="s2_judgment",
@@ -284,6 +303,9 @@ class Orchestrator:
                 "category_confidence": judgment.category_confidence,
                 "severity": judgment.severity,
                 "severity_confidence": judgment.severity_confidence,
+                "priority_score": judgment.priority_score,
+                "priority_confidence": judgment.priority_confidence,
+                "asset_criticality": asset_criticality,
                 "overall_confidence": round(judgment.overall_confidence, 3),
                 "needs_review": judgment.needs_review,
             },
@@ -299,20 +321,49 @@ class Orchestrator:
             )
             return
 
-        new_severity = judgment.severity
+        threshold = self.dispatcher.scfg.confidence_threshold
         old_severity = case_data.get("severity")
-        if (
+        new_severity = judgment.severity
+        old_priority = case_data.get("priority", CasePriority.P3.value)
+
+        # ---- 优先级：Score判定优先，severity映射表兜底（§6） ----
+        if judgment.priority_score is not None and (
+            (judgment.priority_confidence or 0) >= threshold
+        ):
+            try:
+                new_priority = CasePriority(
+                    max(1, min(5, judgment.priority_score)))
+            except ValueError:
+                new_priority = None
+        else:
+            new_priority = None
+        if new_priority is None and (
+            new_severity in [s.value for s in CaseSeverity]
+        ):
+            new_priority = SEVERITY_PRIORITY_MAP.get(CaseSeverity(new_severity))
+        # 资产重要性兜底钳制（core资产事件至少P2）
+        if asset_criticality == "critical" and new_priority is not None:
+            new_priority = min(new_priority, CasePriority.P2)
+
+        # ---- 严重度：高置信自动修正 ----
+        severity_changed = bool(
             new_severity
             and new_severity in [s.value for s in CaseSeverity]
             and new_severity != old_severity
-        ):
-            case = self._rebuild_case(
-                case_data,
-                severity=CaseSeverity(new_severity),
-                priority=SEVERITY_PRIORITY_MAP.get(
-                    CaseSeverity(new_severity), case_data.get("priority", 3)
-                ),
-            )
+        )
+        priority_changed = bool(new_priority is not None
+                                and new_priority.value != old_priority)
+        if not severity_changed and not priority_changed:
+            return
+
+        overrides: dict = {}
+        if severity_changed:
+            overrides["severity"] = CaseSeverity(new_severity)
+        if new_priority is not None:
+            overrides["priority"] = new_priority
+        case = self._rebuild_case(case_data, **overrides)
+
+        if severity_changed:
             change_event = CaseEvent(
                 event_id=f"{case_id}-evt-{str(ULID())}",
                 event_type=CaseEventType.SEVERITY_CHANGED.value,
@@ -325,14 +376,34 @@ class Orchestrator:
                 },
             )
             await self.case_store.add_event(case_id, change_event)
-            await self.case_store.update(case)
-            logger.info(
-                "orchestrator.severity_auto_corrected",
-                case_id=case_id, from_severity=old_severity, to_severity=new_severity,
+        if priority_changed:
+            change_event = CaseEvent(
+                event_id=f"{case_id}-evt-{str(ULID())}",
+                event_type=CaseEventType.PRIORITY_CHANGED.value,
+                actor="s2_dispatcher",
+                detail={
+                    "from": old_priority,
+                    "to": new_priority.value,
+                    "source": "s2_score",
+                    "confidence": judgment.priority_confidence,
+                    "asset_criticality": asset_criticality,
+                    "reason": "S2优先级Score判定（输入severity+资产重要性）",
+                },
             )
+            await self.case_store.add_event(case_id, change_event)
+        await self.case_store.update(case)
+        logger.info(
+            "orchestrator.triage_auto_corrected",
+            case_id=case_id, severity=f"{old_severity}->{new_severity}",
+            priority=f"{old_priority}->{new_priority.value if new_priority else '-'}",
+        )
 
     async def _record_needs_review(self, case_id: str, reason: str) -> None:
-        """记录人工复核事件"""
+        """记录人工复核事件（review_queue_enabled=false时只记日志不写时间线）"""
+        if not self._review_queue_enabled:
+            logger.info("orchestrator.review_skipped_disabled", case_id=case_id,
+                        reason=reason)
+            return
         event = CaseEvent(
             event_id=f"{case_id}-evt-{str(ULID())}",
             event_type="routing_review",
@@ -340,6 +411,34 @@ class Orchestrator:
             detail={"reason": reason},
         )
         await self.case_store.add_event(case_id, event)
+
+    async def _asset_criticality(self, alerts: list[Alert]) -> str | None:
+        """涉及资产的重要性（设计§6优先级Score输入，issue #57）
+
+        按告警src/dst IP匹配资产表，多资产命中取最重要（critical>high>medium>low）。
+        """
+        ips = [
+            ip for ip in ({a.dst_ip for a in alerts} | {a.src_ip for a in alerts})
+            if ip
+        ]
+        if not ips:
+            return None
+        placeholders = ",".join("?" * len(ips))
+        rows = await self.alert_store.db.fetch_all(
+            f"""SELECT criticality FROM assets
+                WHERE ip_address IN ({placeholders})
+                  AND criticality IS NOT NULL""",
+            tuple(ips),
+        )
+        if not rows:
+            return None
+        order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+        best = min(
+            (r["criticality"] for r in rows if r["criticality"] in order),
+            key=lambda c: order[c],
+            default=None,
+        )
+        return best
 
     async def investigate_case(self, case_id: str) -> dict:
         """启动Case调查"""

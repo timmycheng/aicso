@@ -59,15 +59,15 @@ class CaseStore:
         )
         await self.db.commit()
 
-    async def list_cases(
-        self,
+    @staticmethod
+    def _case_filters(
         status: str | None = None,
         severity: str | None = None,
         assignee: str | None = None,
-        limit: int = 50,
-        offset: int = 0,
-    ) -> list[dict]:
-        sql = "SELECT * FROM cases WHERE 1=1"
+        keyword: str | None = None,
+    ) -> tuple[str, list]:
+        """列表/计数共用过滤条件——保证total与列表口径严格一致（issue #57）"""
+        sql = ""
         params: list = []
         if status:
             sql += " AND status = ?"
@@ -78,6 +78,24 @@ class CaseStore:
         if assignee:
             sql += " AND assignee_id = ?"
             params.append(assignee)
+        if keyword:
+            # 关键词搜标题/Case ID（PRD P0：Case列表搜索）
+            like = f"%{keyword}%"
+            sql += " AND (title LIKE ? OR case_id LIKE ?)"
+            params.extend([like, like])
+        return sql, params
+
+    async def list_cases(
+        self,
+        status: str | None = None,
+        severity: str | None = None,
+        assignee: str | None = None,
+        keyword: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict]:
+        where, params = self._case_filters(status, severity, assignee, keyword)
+        sql = f"SELECT * FROM cases WHERE 1=1{where}"
         sql += " ORDER BY created_at DESC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
         return await self.db.fetch_all(sql, tuple(params))
@@ -124,15 +142,15 @@ class CaseStore:
         )
 
     async def count(
-        self, status: str | None = None, severity: str | None = None
+        self,
+        status: str | None = None,
+        severity: str | None = None,
+        assignee: str | None = None,
+        keyword: str | None = None,
     ) -> int:
-        sql = "SELECT COUNT(*) as cnt FROM cases"
-        params: list = []
-        if status:
-            sql += " WHERE status = ?"
-            params.append(status)
-        if severity:
-            sql += " AND severity = ?" if status else " WHERE severity = ?"
-            params.append(severity)
+        # 过滤条件与list_cases共用一套（此前count忽略assignee/keyword，
+        # 列表页total与过滤口径不一致，issue #57）
+        where, params = self._case_filters(status, severity, assignee, keyword)
+        sql = f"SELECT COUNT(*) AS cnt FROM cases WHERE 1=1{where}"
         row = await self.db.fetch_one(sql, tuple(params))
         return row["cnt"] if row else 0
