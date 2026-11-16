@@ -244,9 +244,20 @@ class TestTokenEstimate:
         cjk_tokens = SystemOneClient.estimate_tokens(cjk_text)
         ascii_text = "alert triage decision " * 10  # 220字符
         ascii_tokens = SystemOneClient.estimate_tokens(ascii_text)
-        # CJK ≈ 1 token/字, ASCII ≈ 4字符/token
+        # CJK ≈ 1 token/字, ASCII ≈ 3字符/token（保守上界，issue #57收敛后与engine一致）
         assert 55 <= cjk_tokens <= 65
-        assert 50 <= ascii_tokens <= 65
+        assert 70 <= ascii_tokens <= 80
+
+    def test_single_implementation_with_engine(self):
+        """engine与client共用同一估算实现（issue #57收敛）"""
+        from aicso.router.engine import estimate_tokens as engine_estimate
+        from aicso.systemone.tokens import estimate_tokens as shared_estimate
+
+        text = "告警 alert-123 判定"
+        assert SystemOneClient.estimate_tokens(text) == shared_estimate(text)
+        # engine口径=共享实现+8信封余量
+        assert engine_estimate(text) == shared_estimate(text) + 8
+        assert SystemOneClient.estimate_tokens("") == 0
 
     def test_empty(self):
         assert SystemOneClient.estimate_tokens("") == 0

@@ -58,19 +58,18 @@ from aicso.systemone.client import (
     SystemOneError,
     SystemOneResponse,
 )
+from aicso.systemone.tokens import estimate_tokens as _base_estimate_tokens
 
 logger = structlog.get_logger()
 
 
 def estimate_tokens(text: str) -> int:
-    """粗估请求token数：CJK≈1/字符、ASCII≈1/3字符、+8余量（issue #42）
+    """微批预算口径：共享估算器 + 每项8 token请求信封余量（issue #42）
 
-    上界偏保守——宁可切小批不可422。仅用于微批切分预算，非计费用。
+    上界偏保守——宁可切小批不可422。估算器单一实现见systemone.tokens
+    （issue #57收敛，此前engine //3与client /4两套实现漂移）。
     """
-    if not text:
-        return 8
-    cjk = sum(1 for ch in text if "\u4e00" <= ch <= "\u9fff")
-    return 8 + cjk + (len(text) - cjk) // 3
+    return _base_estimate_tokens(text) + 8
 
 
 def _parse_iso_ts(value) -> datetime | None:

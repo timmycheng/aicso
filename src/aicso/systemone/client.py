@@ -16,6 +16,8 @@ from typing import Union
 import httpx
 import structlog
 
+from aicso.systemone.tokens import estimate_tokens as _shared_estimate_tokens
+
 logger = structlog.get_logger()
 
 # 按 retry-after 等待的限流/过载状态码
@@ -331,15 +333,11 @@ class SystemOneClient:
 
     @staticmethod
     def estimate_tokens(text: str) -> int:
-        """粗估 token 数：CJK字符≈1 token/字，其他≈4字符/token（保守偏高估）
+        """粗估 token 数（单一实现见 systemone.tokens，issue #57收敛）
 
-        用于批量裁剪（64k 单请求预算），误差可接受；实际用量以响应 usage 为准。
+        保守上界：CJK≈1 token/字、其他≈3字符/token。实际用量以响应usage为准。
         """
-        if not text:
-            return 0
-        cjk = sum(1 for ch in text if "\u4e00" <= ch <= "\u9fff")
-        other = len(text) - cjk
-        return cjk + (other + 3) // 4
+        return _shared_estimate_tokens(text)
 
     @classmethod
     def estimate_request_tokens(cls, state: str, questions: dict[str, Question]) -> int:
