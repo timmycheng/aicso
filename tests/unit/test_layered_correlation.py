@@ -107,6 +107,28 @@ class TestColdDiscovery:
         assert ("C1", "C3") not in found, "已关闭Case不参与冷发现"
         await db.close()
 
+    async def test_cold_pair_via_dst_ip_only(self):
+        """仅dst_ip共享（如扫描器IP重复访问）也能冷发现（issue #57重写验证）"""
+        engine, db = await make_merge_engine()
+        await seed_case(db, "C1", "事件一",
+                        [make_alert("A-1", "9.9.9.9", "7.7.7.7")])
+        await seed_case(db, "C2", "事件二",
+                        [make_alert("A-2", "8.8.8.8", "7.7.7.7")])
+        pairs = await engine.find_cold_candidate_pairs()
+        found = {(p.case_a, p.case_b) for p in pairs}
+        assert ("C1", "C2") in found
+        assert any("ip:7.7.7.7" in p.shared_entities for p in pairs)
+        await db.close()
+
+    async def test_cold_dst_ip_index_exists(self):
+        """alerts.dst_ip有索引（issue #57：此前冷发现dst_ip join无索引）"""
+        engine, db = await make_merge_engine()
+        rows = await db.fetch_all(
+            "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='alerts'")
+        names = {r["name"] for r in rows}
+        assert "idx_alerts_dst_ip" in names
+        await db.close()
+
     async def test_sweep_includes_cold_and_executes(self):
         """sweep整体兜底：冷发现候选经裁决执行合并，事件带证据链"""
         client = FakeMergeClient(confidence=0.9)

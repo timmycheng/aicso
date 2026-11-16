@@ -132,29 +132,33 @@ class MergeSplitEngine:
         pair窗过期≠事件结束——索引之外的存量Case（未合并/未关闭）若共享
         IP实体同样应进入合并裁决。min_shared 只是降噪预筛，最终裁决在模型。
         弱实体冷发现需JSON展开扫描，v1 仅IP维度（热路径覆盖近期弱实体）。
+
+        查询形态（issue #57）：先UNION去重(case,ip)对再自连——此前alerts
+        直连在告警多的Case上近似笛卡尔积膨胀，LIMIT截断任意；且dst_ip无
+        索引。现在确定性ORDER BY + 去重后LIMIT，扫描量受索引约束。
         """
         rows = await self.alert_store.db.fetch_all(
             """
-            SELECT a1.case_id AS case_a, a2.case_id AS case_b,
-                   CASE
-                     WHEN a1.src_ip = a2.src_ip THEN a1.src_ip
-                     WHEN a1.src_ip = a2.dst_ip THEN a1.src_ip
-                     WHEN a1.dst_ip = a2.src_ip THEN a1.dst_ip
-                     WHEN a1.dst_ip = a2.dst_ip THEN a1.dst_ip
-                   END AS shared_ip
-            FROM alerts a1
-            JOIN alerts a2
-              ON a1.case_id < a2.case_id
-             AND (a1.src_ip IN (a2.src_ip, a2.dst_ip)
-                  OR a1.dst_ip IN (a2.src_ip, a2.dst_ip))
-            JOIN cases c1 ON c1.case_id = a1.case_id
-             AND c1.merged_into IS NULL
-             AND c1.status NOT IN ('closed', 'resolved')
-            JOIN cases c2 ON c2.case_id = a2.case_id
-             AND c2.merged_into IS NULL
-             AND c2.status NOT IN ('closed', 'resolved')
-            WHERE a1.src_ip IS NOT NULL OR a1.dst_ip IS NOT NULL
-            ORDER BY a1.case_id, a2.case_id
+            WITH case_ip AS (
+                SELECT case_id, src_ip AS ip FROM alerts
+                 WHERE case_id IS NOT NULL AND src_ip IS NOT NULL
+                UNION
+                SELECT case_id, dst_ip AS ip FROM alerts
+                 WHERE case_id IS NOT NULL AND dst_ip IS NOT NULL
+            ),
+            active_case AS (
+                SELECT case_id FROM cases
+                 WHERE merged_into IS NULL
+                   AND status NOT IN ('closed', 'resolved')
+            )
+            SELECT p1.case_id AS case_a, p2.case_id AS case_b,
+                   p1.ip AS shared_ip
+            FROM case_ip p1
+            JOIN case_ip p2
+              ON p2.ip = p1.ip AND p1.case_id < p2.case_id
+            JOIN active_case a1 ON a1.case_id = p1.case_id
+            JOIN active_case a2 ON a2.case_id = p2.case_id
+            ORDER BY case_a, case_b
             LIMIT 5000
             """,
         )

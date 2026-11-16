@@ -111,7 +111,14 @@ class _S1Item:
 
 
 class RouterEngine:
-    """分流引擎：告警 → 已有Case 或 新建Case"""
+    """分流引擎：告警 → 已有Case 或 新建Case
+
+    已知限制（issue #57注释说明）：候选索引/决策缓存/兜底pair均为
+    **进程内存态**。CLI进程里关闭Case，web进程的内存索引不会同步摘除
+    （DB行已改，索引需等重启rebuild或web进程内update触发deactivate）。
+    单进程MVP内无实际影响（CLI与web共享同一进程内引擎实例）；多副本
+    迁移时随SCALING_DESIGN的共享路由状态方案一并解决。
+    """
 
     def __init__(
         self,

@@ -125,7 +125,18 @@ class WriteBuffer:
 
 
 class Database:
-    """SQLite异步数据库管理器"""
+    """SQLite异步数据库管理器
+
+    单连接commit语义（已知约束，issue #57注释说明）：
+    进程内所有组件共享同一条aiosqlite连接，`commit()`/直写路径的commit
+    会连带提交该连接上**所有**未提交语句——包括写缓冲尚未flush的语句与
+    其他组件刚execute的语句。当前以约定规避：
+      - 热路径写走buffered_execute（缓冲统一commit）；
+      - 直写路径（如ops_store.create、case_store.update）在"读己之写"
+        需要时才commit，且均为单语句自包含事务；
+    多语句原子事务需求出现前不改连接模型；届时应换独立连接/显式
+    事务边界（见 docs/REFACTOR_DESIGN.md §12存储profile缝）。
+    """
 
     def __init__(self, db_path: str = "aicso.db", profile: str = "sqlite",
                  url: str | None = None):
@@ -312,6 +323,7 @@ class Database:
 
             CREATE INDEX IF NOT EXISTS idx_alerts_case_id ON alerts(case_id);
             CREATE INDEX IF NOT EXISTS idx_alerts_src_ip ON alerts(src_ip);
+            CREATE INDEX IF NOT EXISTS idx_alerts_dst_ip ON alerts(dst_ip);
             CREATE INDEX IF NOT EXISTS idx_alerts_timestamp ON alerts(timestamp);
             CREATE INDEX IF NOT EXISTS idx_alerts_routed_at ON alerts(routed_at);
             CREATE INDEX IF NOT EXISTS idx_case_events_case_id ON case_events(case_id);

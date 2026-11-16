@@ -275,9 +275,14 @@ async def sample_kafka(config: dict, n: int = 50, timeout_s: float = 8.0,
 
     整体受 timeout_s 预算约束（此前该参数完全未使用，慢速topic下
     采样时长不可控，review #56发现）；超时返回已采到的部分。
+    采样定位各分区最新端回退N条（issue #57：新临时组earliest会采到
+    最老retention消息，建议失去时效性）。
+    采样完清理临时消费组broker侧残留（issue #57：残留组在broker上
+    积累，delete_consumer_groups尽力而为）。
     """
     from aicso.mapping.engine import SchemaMapper
 
+    own_factory = consumer_factory is None
     factory = consumer_factory or _default_kafka_factory
     group = sample_group_id(config.get("topic", "ds"))
     consumer = await factory(config, group)
@@ -285,6 +290,7 @@ async def sample_kafka(config: dict, n: int = 50, timeout_s: float = 8.0,
     samples: list[dict] = []
     try:
         mapper = SchemaMapper({})
+        await _seek_to_recent(consumer, n)
 
         async def _consume() -> None:
             while len(samples) < n:
@@ -303,7 +309,53 @@ async def sample_kafka(config: dict, n: int = 50, timeout_s: float = 8.0,
             pass  # 预算耗尽：返回已采样本
     finally:
         await consumer.stop()
+        if own_factory:
+            # 临时组不commit、无位点价值：清掉broker侧残留（尽力而为）
+            await _delete_consumer_group(config, group)
     return samples[:n]
+
+
+async def _seek_to_recent(consumer, n: int) -> None:
+    """各分区定位到最新端回退N条——采样取最近消息而非最老（issue #57）
+
+    测试替身无assignment/end_offsets时静默跳过（退回earliest默认行为）。
+    """
+    try:
+        assignment = consumer.assignment()
+        if not assignment:
+            return
+        ends = await consumer.end_offsets(list(assignment))
+        for tp in assignment:
+            end = int(ends.get(tp, 0))
+            if end > 0:
+                consumer.seek(tp, max(end - n, 0))
+    except AttributeError:
+        pass  # 测试替身
+
+
+async def _delete_consumer_group(config: dict, group: str) -> None:
+    """删除临时采样消费组（aiokafka AdminClient，尽力而为不抛出）"""
+    try:
+        from aiokafka.admin import AIOKafkaAdminClient
+    except ImportError:
+        return  # aiokafka未安装（测试替身环境）
+    admin = None
+    try:
+        admin = AIOKafkaAdminClient(
+            bootstrap_servers=config.get("bootstrap_servers", "localhost:9092"))
+        await admin.start()
+        try:
+            await admin.delete_consumer_groups([group])
+        except Exception:
+            pass  # 组不存在/老broker不支持——采样组本就无位点，无害
+    except Exception:
+        pass
+    finally:
+        if admin is not None:
+            try:
+                await admin.close()
+            except Exception:
+                pass
 
 
 async def _default_kafka_factory(config: dict, group: str):
