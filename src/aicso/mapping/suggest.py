@@ -5,6 +5,10 @@
 
 置信度 = 值形态命中率 × 名称信号加成；草稿必须经试算验证，
 警告数高或覆盖率低的字段在 notes 中明示。
+
+severity建议（issue #57）：数值刻度推断severity_mapping（1-5小刻度不再
+全落info）；文本值经同义词表归一到引擎规范词表（warning/error/notice/
+中文词建议后不再被引擎降级medium）。
 """
 from __future__ import annotations
 
@@ -15,14 +19,32 @@ import uuid
 from collections.abc import Callable
 from typing import Any
 
+from aicso.mapping.engine import SEVERITY_LEVELS  # 规范词表单一来源（issue #57）
+
 ISO_TS = re.compile(r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}")
 IPV4 = re.compile(r"^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$")
 FQDN = re.compile(
     r"^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$", re.I)
 SHA256 = re.compile(r"^[0-9a-f]{64}$", re.I)
 
-SEVERITY_LEVELS = ("critical", "high", "medium", "low", "info", "warn", "warning",
-                   "error", "notice", "严重", "高", "中", "低")
+# 观测值（小写）→ 引擎规范词表（issue #57：与引擎severity词表统一）
+SEVERITY_SYNONYMS: dict[str, str] = {
+    "critical": "critical", "crit": "critical", "fatal": "critical",
+    "emerg": "critical", "alert": "critical",
+    "严重": "critical", "危急": "critical", "紧急": "critical",
+    "high": "high", "error": "high", "err": "high",
+    "高": "high", "错误": "high",
+    "medium": "medium", "med": "medium", "warn": "medium", "warning": "medium",
+    "notice": "medium", "moderate": "medium",
+    "中": "medium", "警告": "medium", "提示": "medium",
+    "low": "low",
+    "低": "low",
+    "info": "info", "informational": "info", "debug": "info",
+    "信息": "info",
+}
+
+# severity 数值刻度均匀铺开的目标阶梯（升序，索引0=最轻）
+_SEVERITY_LADDER = ("info", "low", "medium", "high", "critical")
 
 # 目标字段 → 名称信号token（子串匹配，命中加分）+ 值形态校验
 TARGETS: dict[str, dict] = {
@@ -113,13 +135,35 @@ def flatten_paths(record: dict, max_depth: int = 4) -> dict[str, list]:
     return out
 
 
+def _infer_numeric_severity_mapping(values: list) -> dict[int, str] | None:
+    """数值severity刻度 → severity_mapping建议（issue #57）
+
+    小离散刻度（2-6个取值，≤10）：按升序均匀铺到引擎5档——否则引擎默认
+    阈值（80/60/40/20面向0-100）会把1-5刻度全部映射成info。
+    连续大范围刻度（如0-100）返回None：引擎默认阈值本就是为它设计的。
+    """
+    try:
+        distinct = sorted({int(v) for v in values})
+    except (ValueError, TypeError):
+        return None
+    if not (2 <= len(distinct) <= 6) or distinct[-1] > 10:
+        return None
+    n = len(distinct)
+    mapping: dict[int, str] = {}
+    for i, value in enumerate(distinct):
+        idx = round(i * (len(_SEVERITY_LADDER) - 1) / (n - 1))
+        mapping[value] = _SEVERITY_LADDER[idx]
+    return mapping
+
+
 def suggest_mapping(samples: list[dict]) -> dict:
     """从样本推断映射草稿：fields/entity_mapping + 置信度 + notes
 
     纯本地确定性规则；草稿必须过试算验证并人工确认（#49系统提议、人拍板）。
     """
     if not samples:
-        return {"fields": {}, "entity_mapping": {}, "coverage": {}, "notes": ["无样本"]}
+        return {"fields": {}, "entity_mapping": {}, "severity_mapping": {},
+                "coverage": {}, "notes": ["无样本"]}
     paths = flatten_paths(samples[0])
     for s in samples[1:]:
         for path, values in flatten_paths(s).items():
@@ -129,6 +173,7 @@ def suggest_mapping(samples: list[dict]) -> dict:
     fields: dict[str, str] = {}
     entities: dict[str, str] = {}
     coverage: dict[str, float] = {}
+    severity_mapping: dict = {}
     used: set[str] = set()
 
     def shape_ok(target: str, values: list) -> float:
@@ -160,17 +205,37 @@ def suggest_mapping(samples: list[dict]) -> dict:
     for target, spec in TARGETS.items():
         pick(target, spec, fields)
 
-    # severity 双字段消歧：text=字符串枚举路径，int=数值路径
+    # severity 双字段消歧：text=字符串枚举路径，int=数值路径；
+    # 并附severity_mapping建议（issue #57：数值刻度+词表归一）
     sev_paths = [p for p in paths if "severity" in p.lower() or p.lower().endswith("level")]
     for path in sev_paths:
         values = paths[path]
         if all(isinstance(v, (int, float)) for v in values):
             fields.setdefault("severity_int", path)
             coverage["severity_int"] = 0.8
-        elif any(isinstance(v, str) and str(v).lower() in SEVERITY_LEVELS
+            mapping = _infer_numeric_severity_mapping(values)
+            if mapping:
+                severity_mapping.update(mapping)
+                span = f"{min(mapping)}-{max(mapping)}"
+                notes.append(
+                    f"数值severity刻度{span}：建议severity_mapping"
+                    f"{mapping}（引擎默认阈值面向0-100，小刻度需显式映射）")
+        elif any(isinstance(v, str) and str(v).lower() in SEVERITY_SYNONYMS
                  for v in values):
             fields.setdefault("severity_text", path)
             coverage["severity_text"] = 0.8
+            # 词表归一：非规范词建议severity_mapping映射（引擎只认规范词表，
+            # warning/error/notice/中文词等会被静默降级medium——issue #57）
+            for raw in sorted({str(v) for v in values if isinstance(v, str)}):
+                canon = SEVERITY_SYNONYMS.get(raw.lower())
+                if canon and raw.lower() not in SEVERITY_LEVELS:
+                    severity_mapping[raw] = canon
+            unmapped = sorted({
+                str(v) for v in values
+                if isinstance(v, str) and str(v).lower() not in SEVERITY_SYNONYMS
+            })
+            if unmapped:
+                notes.append(f"severity值{unmapped}无法识别，建议人工核对词表")
 
     for target, spec in ENTITY_TARGETS.items():
         pick(target, spec, entities)
@@ -192,6 +257,7 @@ def suggest_mapping(samples: list[dict]) -> dict:
     return {
         "fields": fields,
         "entity_mapping": entities,
+        "severity_mapping": severity_mapping,
         "coverage": coverage,
         "notes": notes,
         "sample_count": len(samples),
