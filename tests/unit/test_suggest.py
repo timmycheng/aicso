@@ -184,3 +184,57 @@ class TestSeveritySuggestion:
         samples = [{"severity": "weird_level"}, {"severity": "high"}]
         result = suggest_mapping(samples)
         assert any("weird_level" in n for n in result["notes"])
+
+
+class TestSampleKafkaRecentSeek:
+    """Kafka采样取最新消息+临时组清理（issue #57）"""
+
+    async def test_seek_to_recent_offsets(self):
+        """采样前seek到各分区end回退N条——不再采最老retention消息"""
+        seeked = {}
+
+        class _RecentAwareConsumer:
+            started = stopped = False
+
+            async def start(self):
+                self.started = True
+
+            async def stop(self):
+                self.stopped = True
+
+            def assignment(self):
+                return [("t", 0)]
+
+            async def end_offsets(self, tps):
+                return {tp: 1000 for tp in tps}
+
+            def seek(self, tp, offset):
+                seeked[tp] = offset
+
+            async def getmany(self, timeout_ms=0, max_records=0):
+                return {}  # seek后无消息：验证循环正常退出
+
+        async def factory(config, group):
+            return _RecentAwareConsumer()
+
+        samples = await sample_kafka({"topic": "t"}, n=5, consumer_factory=factory)
+        assert seeked == {("t", 0): 995}, "应seek到end(1000)-n(5)"
+        assert samples == []
+
+    async def test_injected_factory_skips_group_delete(self):
+        """注入factory（测试替身）不触发admin清理路径，正常返回"""
+        async def factory(config, group):
+            class _C:
+                async def start(self):
+                    pass
+
+                async def stop(self):
+                    pass
+
+                async def getmany(self, timeout_ms=0, max_records=0):
+                    return {}
+
+            return _C()
+
+        samples = await sample_kafka({"topic": "t"}, n=3, consumer_factory=factory)
+        assert samples == []
